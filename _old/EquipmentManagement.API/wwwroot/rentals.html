@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rental Management - Equipment Management System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --color-primary: #2D3748;
+            --color-secondary: #4A5568;
+            --color-success: #38A169;
+            --color-warning: #D69E2E;
+            --color-error: #E53E3E;
+            --color-background: #FAFAFA;
+            --font-primary: 'Inter', sans-serif;
+        }
+
+        body {
+            font-family: var(--font-primary);
+            background: linear-gradient(135deg, #FAFAFA 0%, #F7FAFC 100%);
+            min-height: 100vh;
+        }
+
+        .rental-card {
+            transition: all 0.3s ease;
+            border-left: 4px solid transparent;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+            .rental-card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            }
+
+            .rental-card.pending {
+                border-left-color: var(--color-warning);
+            }
+
+            .rental-card.approved {
+                border-left-color: var(--color-success);
+            }
+
+            .rental-card.active {
+                border-left-color: var(--color-primary);
+            }
+
+            .rental-card.returned {
+                border-left-color: var(--color-secondary);
+            }
+
+            .rental-card.overdue {
+                border-left-color: var(--color-error);
+            }
+
+            .rental-card.cancelled {
+                border-left-color: var(--color-secondary);
+                opacity: 0.7;
+            }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-pending {
+            background-color: #FEF3C7;
+            color: #92400E;
+        }
+
+        .status-approved {
+            background-color: #D1FAE5;
+            color: #065F46;
+        }
+
+        .status-active {
+            background-color: #DBEAFE;
+            color: #1E40AF;
+        }
+
+        .status-returned {
+            background-color: #F3F4F6;
+            color: #374151;
+        }
+
+        .status-overdue {
+            background-color: #FEE2E2;
+            color: #991B1B;
+        }
+
+        .status-cancelled {
+            background-color: #F3F4F6;
+            color: #6B7280;
+        }
+
+        .nav-link:hover {
+            color: var(--color-success);
+        }
+
+        .action-btn {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            cursor: pointer;
+            border: none;
+        }
+
+            .action-btn.primary {
+                background: var(--color-primary);
+                color: white;
+            }
+
+            .action-btn.success {
+                background: var(--color-success);
+                color: white;
+            }
+
+            .action-btn.warning {
+                background: var(--color-warning);
+                color: white;
+            }
+
+            .action-btn.danger {
+                background: var(--color-error);
+                color: white;
+            }
+
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+            .modal.active {
+                opacity: 1;
+                visibility: visible;
+            }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            transform: scale(0.9);
+            transition: transform 0.3s ease;
+        }
+
+        .modal.active .modal-content {
+            transform: scale(1);
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #D1D5DB;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .filter-tab {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            text-align: center;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+
+            .filter-tab.active {
+                background: var(--color-primary);
+                color: white;
+            }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="bg-white shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0"><h1 class="text-xl font-bold text-gray-800">Equipment Manager</h1></div>
+                    <div class="hidden md:block">
+                        <div class="ml-10 flex items-baseline space-x-4">
+                            <a href="index.html" class="nav-link text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Dashboard</a>
+                            <a href="warehouse.html" class="nav-link text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Warehouse</a>
+                            <a href="catalog.html" class="nav-link text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Equipment Catalog</a>
+                            <a href="rentals.html" class="nav-link text-gray-900 font-medium px-3 py-2 rounded-md text-sm">Rentals</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button onclick="rentalManager.showNewRentalModal()" class="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700">New Rental</button>
+                    <button class="bg-gray-800 text-white px-3 py-1 rounded text-sm hover:bg-gray-700">Logout</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 mt-8">
+        <!-- Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow text-center">
+                <div class="text-2xl font-bold text-blue-600" id="total-rentals">0</div>
+                <div class="text-sm text-gray-500">Total Rentals</div>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow text-center">
+                <div class="text-2xl font-bold text-green-600" id="active-rentals">0</div>
+                <div class="text-sm text-gray-500">Active Rentals</div>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow text-center">
+                <div class="text-2xl font-bold text-yellow-600" id="pending-approvals">0</div>
+                <div class="text-sm text-gray-500">Pending Approvals</div>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow text-center">
+                <div class="text-2xl font-bold text-red-600" id="overdue-rentals">0</div>
+                <div class="text-sm text-gray-500">Overdue</div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="flex bg-white rounded-lg shadow p-1 mb-8">
+            <div class="filter-tab active" data-filter="all" onclick="rentalManager.setFilter('all')">All</div>
+            <div class="filter-tab" data-filter="active" onclick="rentalManager.setFilter('Active')">Active</div>
+            <div class="filter-tab" data-filter="pending" onclick="rentalManager.setFilter('Pending')">Pending</div>
+            <div class="filter-tab" data-filter="overdue" onclick="rentalManager.setFilter('Overdue')">Overdue</div>
+        </div>
+
+        <!-- List -->
+        <div class="bg-white rounded-lg shadow p-6 min-h-[400px]">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold text-gray-900">Rentals</h2>
+                <input type="text" id="rental-search" placeholder="Search..." class="px-3 py-2 border rounded-md">
+            </div>
+            <div id="rentals-container" class="space-y-4">
+                <div class="text-center text-gray-500">Loading...</div>
+            </div>
+            <div id="no-rentals" class="text-center py-12 hidden">
+                <p class="text-gray-500">No rentals found</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Rental Modal -->
+    <div id="new-rental-modal" class="modal">
+        <div class="modal-content">
+            <div class="p-6">
+                <h2 class="text-2xl font-bold mb-6">Create New Rental</h2>
+                <form id="new-rental-form" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-1">User</label>
+                            <select id="rental-user" class="form-input">
+                                <option value="1">John Smith</option>
+                                <option value="2">Sarah Johnson</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Project</label>
+                            <input type="text" id="rental-project" class="form-input" required>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Purpose</label>
+                        <input type="text" id="rental-purpose" class="form-input" required>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Start Date</label>
+                            <input type="date" id="rental-start-date" class="form-input" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1">End Date</label>
+                            <input type="date" id="rental-end-date" class="form-input" required>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Equipment</label>
+                        <div id="equipment-selection" class="border rounded p-2 max-h-32 overflow-y-auto"></div>
+                    </div>
+                    <div class="flex gap-4 pt-4">
+                        <button type="button" onclick="rentalManager.closeModal('new-rental-modal')" class="flex-1 px-4 py-2 border rounded">Cancel</button>
+                        <button type="submit" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded">Submit</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Return Modal -->
+    <div id="return-modal" class="modal">
+        <div class="modal-content">
+            <div class="p-6">
+                <h2 class="text-2xl font-bold mb-6">Return Equipment</h2>
+                <form id="return-form" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Condition</label>
+                        <select id="return-condition" class="form-input">
+                            <option value="Good">Good</option>
+                            <option value="Damaged">Damaged</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Notes</label>
+                        <textarea id="return-notes" class="form-input"></textarea>
+                    </div>
+                    <div class="flex gap-4 pt-4">
+                        <button type="button" onclick="rentalManager.closeModal('return-modal')" class="flex-1 px-4 py-2 border rounded">Cancel</button>
+                        <button type="submit" class="flex-1 px-4 py-2 bg-green-600 text-white rounded">Confirm Return</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Extend Modal -->
+    <div id="extend-modal" class="modal">
+        <div class="modal-content">
+            <div class="p-6">
+                <h2 class="text-2xl font-bold mb-6">Extend Rental</h2>
+                <form id="extend-form" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">New End Date</label>
+                        <input type="date" id="extend-date" class="form-input" required>
+                    </div>
+                    <div class="flex gap-4 pt-4">
+                        <button type="button" onclick="rentalManager.closeModal('extend-modal')" class="flex-1 px-4 py-2 border rounded">Cancel</button>
+                        <button type="submit" class="flex-1 px-4 py-2 bg-yellow-600 text-white rounded">Confirm Extension</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="api-simulation.js"></script>
+    <script src="main.js"></script>
+    <script>
+        class RentalManager {
+            constructor() {
+                this.rentals = [];
+                this.currentFilter = 'all';
+                this.selectedRentalId = null;
+                this.init();
+            }
+
+            async init() {
+                while (!window.sqlAPI) await new Promise(r => setTimeout(r, 100));
+                this.loadRentalsFromSQL();
+                this.setupEventListeners();
+            }
+
+            async loadRentalsFromSQL() {
+                try {
+                    const data = await window.sqlAPI.getRentals();
+                    this.rentals = data.map(r => ({
+                        id: r.rentalID,
+                        user: { name: `Employee #${r.employeeID}`, department: 'General' },
+                        purpose: r.purpose,
+                        project_code: r.projectCode,
+                        status: r.status,
+                        start_date: r.startDate,
+                        end_date: r.endDate,
+                        total_cost: r.totalCost,
+                        rental_number: r.rentalNumber,
+                        equipment: (r.rentalItems || []).map(i => ({
+                            name: i.tool ? i.tool.toolName : 'Tool',
+                            serial: i.tool ? i.tool.serialNumber : 'N/A'
+                        }))
+                    }));
+                    this.renderRentals();
+                    this.calculateStats();
+                } catch (e) { console.error(e); }
+            }
+
+            setupEventListeners() {
+                document.getElementById('rental-search').addEventListener('input', (e) => this.setFilter(this.currentFilter));
+
+                // Form Submit Handlers
+                document.getElementById('new-rental-form').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.createNewRental();
+                });
+
+                document.getElementById('return-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const condition = document.getElementById('return-condition').value;
+                    const notes = document.getElementById('return-notes').value;
+                    if (await window.sqlAPI.returnRental(this.selectedRentalId, condition, notes)) {
+                        this.closeModal('return-modal');
+                        this.loadRentalsFromSQL();
+                    }
+                });
+
+                document.getElementById('extend-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const date = document.getElementById('extend-date').value;
+                    if (await window.sqlAPI.extendRental(this.selectedRentalId, date)) {
+                        this.closeModal('extend-modal');
+                        this.loadRentalsFromSQL();
+                    }
+                });
+
+                // Populate Equipment on Date Change
+                document.getElementById('rental-start-date').addEventListener('change', () => this.populateEquipmentSelection());
+            }
+
+            renderRentals() {
+                const container = document.getElementById('rentals-container');
+                container.innerHTML = '';
+
+                let filtered = this.rentals;
+                if (this.currentFilter !== 'all') {
+                    filtered = filtered.filter(r => r.status.toLowerCase() === this.currentFilter.toLowerCase());
+                }
+
+                if (filtered.length === 0) {
+                    container.innerHTML = '<div class="text-center text-gray-500">No rentals found</div>';
+                    return;
+                }
+
+                filtered.forEach(rental => {
+                    let buttons = '';
+                    if (rental.status === 'Pending') {
+                        buttons = `<button onclick="rentalManager.updateStatus(${rental.id}, 'approve')" class="action-btn success text-xs mr-2">Approve</button>
+                                       <button onclick="rentalManager.updateStatus(${rental.id}, 'cancel')" class="action-btn danger text-xs">Reject</button>`;
+                    } else if (rental.status === 'Active') {
+                        buttons = `<button onclick="rentalManager.openModal(${rental.id}, 'return-modal')" class="action-btn primary text-xs mr-2">Return</button>
+                                       <button onclick="rentalManager.openModal(${rental.id}, 'extend-modal')" class="action-btn warning text-xs">Extend</button>`;
+                    }
+
+                    const equipList = rental.equipment.map(e => `<div>${e.name} (${e.serial})</div>`).join('');
+
+                    container.innerHTML += `
+                            <div class="rental-card ${rental.status.toLowerCase()} p-6 border rounded shadow mb-4 bg-white border-l-4">
+                                <div class="flex justify-between mb-2">
+                                    <h3 class="font-bold">${rental.rental_number || 'ID: ' + rental.id}</h3>
+                                    <span class="status-badge status-${rental.status.toLowerCase()}">${rental.status}</span>
+                                </div>
+                                <div class="text-sm text-gray-600 mb-2">${rental.purpose}</div>
+                                <div class="flex justify-between text-sm mb-4">
+                                    <span>${new Date(rental.start_date).toLocaleDateString()}</span>
+                                    <span>${new Date(rental.end_date).toLocaleDateString()}</span>
+                                </div>
+                                <div class="bg-gray-50 p-2 rounded mb-4 text-sm">${equipList || 'No Items'}</div>
+                                <div class="flex justify-between items-center pt-2 border-t">
+                                    <span class="font-bold">$${(rental.total_cost || 0).toFixed(2)}</span>
+                                    <div>${buttons}</div>
+                                </div>
+                            </div>
+                        `;
+                });
+            }
+
+            setFilter(filter) {
+                this.currentFilter = filter;
+                document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+                if (event && event.target) event.target.classList.add('active');
+                this.renderRentals();
+            }
+
+            calculateStats() {
+                if (document.getElementById('total-rentals')) {
+                    document.getElementById('total-rentals').textContent = this.rentals.length;
+                    document.getElementById('active-rentals').textContent = this.rentals.filter(r => r.status === 'Active').length;
+                    document.getElementById('pending-approvals').textContent = this.rentals.filter(r => r.status === 'Pending').length;
+                }
+            }
+
+            // Actions
+            async updateStatus(id, action) {
+                if (confirm('Proceed?')) {
+                    await window.sqlAPI.updateRentalStatus(id, action);
+                    this.loadRentalsFromSQL();
+                }
+            }
+
+            openModal(id, modalId) {
+                this.selectedRentalId = id;
+                document.getElementById(modalId).classList.add('active');
+            }
+
+            closeModal(modalId) {
+                document.getElementById(modalId).classList.remove('active');
+            }
+
+            showNewRentalModal() {
+                // Default dates
+                const now = new Date().toISOString().split('T')[0];
+                document.getElementById('rental-start-date').value = now;
+                document.getElementById('rental-end-date').value = now;
+                this.populateEquipmentSelection();
+                this.openModal(null, 'new-rental-modal');
+            }
+
+            async populateEquipmentSelection() {
+                const container = document.getElementById('equipment-selection');
+                container.innerHTML = 'Loading...';
+                try {
+                    const tools = await window.sqlAPI.getEquipment();
+                    // Simple availability check could go here
+                    container.innerHTML = '';
+                    tools.filter(t => t.status === 'Available').forEach(t => {
+                        container.innerHTML += `
+                                <label class="flex items-center space-x-2 p-1 hover:bg-gray-50">
+                                    <input type="checkbox" value="${t.id}" class="equipment-checkbox">
+                                    <span>${t.name} (${t.serial_number})</span>
+                                </label>`;
+                    });
+                } catch (e) { container.innerHTML = 'Error loading tools'; }
+            }
+
+            async createNewRental() {
+                const userId = document.getElementById('rental-user').value;
+                const project = document.getElementById('rental-project').value;
+                const purpose = document.getElementById('rental-purpose').value;
+                const start = document.getElementById('rental-start-date').value;
+                const end = document.getElementById('rental-end-date').value;
+
+                const selectedIds = Array.from(document.querySelectorAll('.equipment-checkbox:checked')).map(cb => parseInt(cb.value));
+
+                if (selectedIds.length === 0) { alert('Select equipment'); return; }
+
+                const payload = {
+                    employeeID: parseInt(userId),
+                    purpose: purpose,
+                    projectCode: project,
+                    startDate: start,
+                    endDate: end,
+                    status: 'Pending',
+                    rentalItems: selectedIds.map(id => ({ toolID: id, quantity: 1 }))
+                };
+
+                if (await window.sqlAPI.createRental(payload)) {
+                    this.closeModal('new-rental-modal');
+                    this.loadRentalsFromSQL();
+                } else {
+                    alert('Failed to create rental');
+                }
+            }
+        }
+
+        const rentalManager = new RentalManager();
+    </script>
+</body>
+</html>

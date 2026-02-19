@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+env1/
+
+# Build/package artifacts
+build/
+dist/
+*.egg-info/
+*.zip
+
+# IDE/editor
+.vscode/
+.idea/
+.vs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs/local runtime files
+*.log
+
+# .NET/C# build output under legacy folder
+_old/**/bin/
+_old/**/obj/
+

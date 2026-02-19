@@ -1,0 +1,16 @@
+[Unit]
+Description=Asset Management API (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=rune
+Group=rune
+WorkingDirectory=/home/rune/dev/asset_management
+EnvironmentFile=/etc/asset_management/asset_management.env
+ExecStart=/home/rune/dev/asset_management/venv/bin/gunicorn -k uvicorn.workers.UvicornWorker -w 3 -b 0.0.0.0:5001 AssetMan:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

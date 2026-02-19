@@ -1,0 +1,1758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equipment Catalog - Equipment Management System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --color-primary: #2D3748;
+            --color-secondary: #4A5568;
+            --color-success: #38A169;
+            --color-warning: #D69E2E;
+            --color-error: #E53E3E;
+            --color-background: #FAFAFA;
+            --font-primary: 'Inter', sans-serif;
+        }
+        
+        body {
+            font-family: var(--font-primary);
+            background: linear-gradient(135deg, #FAFAFA 0%, #F7FAFC 100%);
+            min-height: 100vh;
+        }
+        
+        .equipment-card {
+            transition: all 0.3s ease;
+            border-left: 4px solid transparent;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .equipment-card:hover {
+            transform: translateY(-4px) rotateX(2deg);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            border-left-color: var(--color-success);
+        }
+
+        .cert-expiring {
+            background: #FFFBEB;
+            border-left-color: #FBBF24;
+        }
+
+        .cert-expired {
+            background: #FEF2F2;
+            border-left-color: #EF4444;
+        }
+        
+        .equipment-image {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            background: #F7FAFC;
+            border-bottom: 1px solid #E2E8F0;
+        }
+        
+        .equipment-image.placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #A0AEC0;
+            font-size: 14px;
+        }
+        
+        .status-badge {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+        
+        .status-available {
+            background-color: var(--color-success);
+            color: white;
+        }
+        
+        .status-rented {
+            background-color: var(--color-warning);
+            color: white;
+        }
+        
+        .status-maintenance {
+            background-color: var(--color-error);
+            color: white;
+        }
+        
+        .price-tag {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--color-primary);
+        }
+        
+        .cart-sidebar {
+            position: fixed;
+            top: 0;
+            right: -400px;
+            width: 400px;
+            height: 100vh;
+            background: white;
+            box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1);
+            transition: right 0.3s ease;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .cart-sidebar.open {
+            right: 0;
+        }
+        
+        .cart-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            z-index: 999;
+        }
+        
+        .cart-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .filter-sidebar {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+        }
+        
+        .category-filter {
+            margin-bottom: 1rem;
+        }
+        
+        .category-item {
+            padding: 0.5rem 0;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border-radius: 4px;
+            padding-left: 0.5rem;
+        }
+        
+        .category-item:hover {
+            background: #F7FAFC;
+            color: var(--color-success);
+        }
+        
+        .category-item.active {
+            background: var(--color-success);
+            color: white;
+        }
+        
+        .price-range {
+            margin-top: 1rem;
+        }
+        
+        .price-slider {
+            width: 100%;
+            margin: 0.5rem 0;
+        }
+        
+        .search-bar {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+        }
+        
+        .hero-section {
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+            color: white;
+            padding: 1.5rem 0;
+            margin-bottom: 2rem;
+        }
+        
+        .nav-link {
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        
+        .nav-link:hover {
+            color: var(--color-success);
+        }
+        
+        .nav-link::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background-color: var(--color-success);
+            transition: width 0.2s ease;
+        }
+        
+        .nav-link:hover::after {
+            width: 100%;
+        }
+        
+        .cart-item {
+            border-bottom: 1px solid #E2E8F0;
+            padding: 1rem 0;
+        }
+        
+        .cart-item:last-child {
+            border-bottom: none;
+        }
+        
+        .quantity-control {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .quantity-btn {
+            width: 32px;
+            height: 32px;
+            border: 1px solid #CBD5E0;
+            background: white;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .quantity-btn:hover {
+            background: #F7FAFC;
+            border-color: var(--color-success);
+        }
+        
+        .cart-total {
+            border-top: 2px solid #E2E8F0;
+            padding-top: 1rem;
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--color-primary);
+        }
+        
+        .checkout-btn {
+            background: linear-gradient(135deg, var(--color-success) 0%, #48BB78 100%);
+            color: white;
+            padding: 1rem;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .checkout-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(56, 161, 105, 0.3);
+        }
+        
+        .checkout-btn:disabled {
+            background: #CBD5E0;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1001;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .modal.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            transform: scale(0.9);
+            transition: transform 0.3s ease;
+        }
+        
+        .modal.active .modal-content {
+            transform: scale(1);
+        }
+        
+        .equipment-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+        
+        .cart-indicator {
+            position: relative;
+        }
+        
+        .cart-badge {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: var(--color-error);
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        @media (max-width: 768px) {
+            .cart-sidebar {
+                width: 100vw;
+            }
+            
+            .equipment-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="bg-white shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <h1 class="text-xl font-bold text-gray-800">Equipment Manager</h1>
+                    </div>
+                    <div class="hidden md:block">
+                        <div class="ml-10 flex items-baseline space-x-4">
+                            <a href="index.html" class="nav-link text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Dashboard</a>
+                            <a href="warehouse.html" class="nav-link text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Warehouse</a>
+                            <a href="catalog.html" class="nav-link text-gray-900 font-medium px-3 py-2 rounded-md text-sm">Equipment Catalog</a>
+                            <a href="rentals.html" class="nav-link text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Rentals</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button onclick="catalogManager.toggleCart()" class="cart-indicator p-2 text-gray-600 hover:text-gray-900 relative">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4m0 0L7 13m0 0l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 13v4a2 2 0 01-2 2H9a2 2 0 01-2-2v-4m8 0V9a2 2 0 00-2-2H9a2 2 0 00-2 2v4.01"></path>
+                        </svg>
+                        <span id="cart-badge" class="cart-badge" style="display: none;">0</span>
+                    </button>
+                    <div class="text-sm text-gray-600">
+                        <span class="user-full-name">Loading...</span>
+                        <span class="text-xs text-gray-500 user-role">Admin</span>
+                    </div>
+                    <button class="bg-gray-800 text-white px-3 py-1 rounded text-sm hover:bg-gray-700">
+                        Logout
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <div class="hero-section">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center">
+                <h1 class="text-3xl font-bold mb-2">Equipment Catalog</h1>
+                <p class="text-lg opacity-90">Browse and rent professional equipment and tools</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
+        <!-- Search Bar -->
+        <div class="search-bar">
+            <div class="flex flex-col md:flex-row gap-4">
+                <div class="flex-1">
+                    <input type="text" id="search-input" placeholder="Search equipment by name, model, or serial number..." 
+                           class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                <button onclick="catalogManager.performSearch()" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">
+                    Search
+                </button>
+                <button onclick="catalogManager.clearFilters()" class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium">
+                    Clear
+                </button>
+                <button onclick="catalogManager.openCreateToolModal()" class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium">
+                    New Tool
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            <!-- Filter Sidebar -->
+            <div class="lg:col-span-1">
+                <div class="filter-sidebar">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Filters</h3>
+                    
+                    <!-- Categories -->
+                    <div class="category-filter">
+                        <h4 class="font-medium text-gray-700 mb-2">Categories</h4>
+                        <div id="category-list">
+                            <div class="category-item active" data-category="">All Categories</div>
+                            <div class="category-item" data-category="1">Measuring Tools</div>
+                            <div class="category-item" data-category="2">Power Tools</div>
+                            <div class="category-item" data-category="3">Safety Equipment</div>
+                            <div class="category-item" data-category="4">Testing Equipment</div>
+                            <div class="category-item" data-category="5">Hand Tools</div>
+                            <div class="category-item" data-category="6">Lifting Equipment</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Availability Filter -->
+                    <div class="mt-6">
+                        <h4 class="font-medium text-gray-700 mb-2">Availability</h4>
+                        <div class="space-y-2">
+                            <label class="flex items-center">
+                                <input type="checkbox" class="status-filter" value="Available" checked>
+                                <span class="ml-2 text-sm">Available</span>
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" class="status-filter" value="Rented">
+                                <span class="ml-2 text-sm">Rented</span>
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" class="status-filter" value="Maintenance">
+                                <span class="ml-2 text-sm">Maintenance</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Price Range -->
+                    <div class="price-range">
+                        <h4 class="font-medium text-gray-700 mb-2">Price Range (per day)</h4>
+                        <div class="flex items-center space-x-2">
+                            <input type="number" id="min-price" placeholder="Min" class="w-20 px-2 py-1 border border-gray-300 rounded text-sm">
+                            <span class="text-gray-500">-</span>
+                            <input type="number" id="max-price" placeholder="Max" class="w-20 px-2 py-1 border border-gray-300 rounded text-sm">
+                        </div>
+                    </div>
+                    
+                    <!-- Certification Required -->
+                    <div class="mt-4">
+                        <label class="flex items-center">
+                            <input type="checkbox" id="certification-required">
+                            <span class="ml-2 text-sm">Certification Required</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Equipment Grid -->
+            <div class="lg:col-span-3">
+                <div class="flex items-center justify-between mb-6">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-900">Available Equipment</h2>
+                        <p class="text-gray-600 mt-1" id="equipment-count">Loading equipment...</p>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <select id="sort-select" class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="name">Sort by Name</option>
+                            <option value="price-low">Price: Low to High</option>
+                            <option value="price-high">Price: High to Low</option>
+                            <option value="category">Category</option>
+                            <option value="status">Status</option>
+                        </select>
+                        <div class="flex items-center space-x-2">
+                            <button onclick="catalogManager.setView('grid')" id="grid-view" class="p-2 border border-gray-300 rounded hover:bg-gray-50">
+                                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path>
+                                </svg>
+                            </button>
+                            <button onclick="catalogManager.setView('list')" id="list-view" class="p-2 border border-gray-300 rounded hover:bg-gray-50">
+                                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="equipment-grid" class="equipment-grid">
+                    <!-- Equipment cards will be populated by JavaScript -->
+                </div>
+
+                <!-- Load More Button -->
+                <div class="text-center mt-8">
+                    <button onclick="catalogManager.loadMore()" id="load-more-btn" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">
+                        Load More Equipment
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shopping Cart Sidebar -->
+    <div class="cart-overlay" onclick="catalogManager.toggleCart()"></div>
+    <div class="cart-sidebar">
+        <div class="flex items-center justify-between p-6 border-b">
+            <h3 class="text-lg font-semibold text-gray-900">Shopping Cart</h3>
+            <button onclick="catalogManager.toggleCart()" class="text-gray-500 hover:text-gray-700">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        
+        <div class="flex-1 p-6 overflow-y-auto">
+            <div id="cart-items">
+                <div class="text-center text-gray-500 py-8">
+                    <svg class="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4m0 0L7 13m0 0l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 13v4a2 2 0 01-2 2H9a2 2 0 01-2-2v-4m8 0V9a2 2 0 00-2-2H9a2 2 0 00-2 2v4.01"></path>
+                    </svg>
+                    <p>Your cart is empty</p>
+                    <p class="text-sm mt-2">Add equipment to get started</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="p-6 border-t">
+            <div class="cart-total">
+                <div class="flex justify-between items-center">
+                    <span>Total:</span>
+                    <span id="cart-total">$0.00</span>
+                </div>
+            </div>
+            
+            <div class="mt-4 space-y-3">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Rental Start Date</label>
+                    <input type="date" id="rental-start" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Rental End Date</label>
+                    <input type="date" id="rental-end" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+            </div>
+            
+            <button onclick="catalogManager.proceedToCheckout()" id="checkout-btn" class="checkout-btn w-full mt-4" disabled>
+                Proceed to Checkout
+            </button>
+        </div>
+    </div>
+
+    <!-- Equipment Detail Modal -->
+    <div id="equipment-modal" class="modal">
+        <div class="modal-content">
+            <div id="modal-body">
+                <!-- Modal content will be populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Tool Modal -->
+    <div id="create-tool-modal" class="modal" aria-hidden="true">
+        <div class="modal-content">
+            <div class="p-6">
+                <div class="flex items-start justify-between mb-6">
+                    <div>
+                        <h2 id="ct-modal-title" class="text-2xl font-bold text-gray-900">Create New Tool</h2>
+                        <p id="ct-modal-desc" class="text-sm text-gray-500 mt-1">Fill out all relevant tool details, then click Create Tool.</p>
+                    </div>
+                    <button onclick="catalogManager.closeCreateToolModal()" class="text-gray-500 hover:text-gray-700" aria-label="Close">
+                        ✕
+                    </button>
+                </div>
+
+                <form id="create-tool-form" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Tool Name</label>
+                            <input id="ct-name" type="text" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., Digital Caliper Set">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Manufacturer</label>
+                            <input id="ct-manufacturer" type="text" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., Mitutoyo">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Model Number</label>
+                            <input id="ct-model" type="text" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., 500-196-30">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                            <select id="ct-category" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="" selected disabled>Select a category</option>
+                                <option value="1">Measuring Tools</option>
+                                <option value="2">Power Tools</option>
+                                <option value="3">Safety Equipment</option>
+                                <option value="4">Testing Equipment</option>
+                                <option value="5">Hand Tools</option>
+                                <option value="6">Lifting Equipment</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Warehouse</label>
+                            <select id="ct-warehouse" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="" selected disabled>Loading...</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                            <select id="ct-status" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="Available" selected>Available</option>
+                                <option value="Rented">Rented</option>
+                                <option value="Maintenance">Maintenance</option>
+                                <option value="Retired">Retired</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Condition</label>
+                            <select id="ct-condition" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="Good" selected>Good</option>
+                                <option value="Fair">Fair</option>
+                                <option value="Needs Repair">Needs Repair</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Daily Rental Cost</label>
+                            <input id="ct-daily-cost" type="number" step="0.01" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="0.00">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Purchase Price</label>
+                            <input id="ct-purchase-price" type="number" step="0.01" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="0.00">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Purchase Date</label>
+                            <input id="ct-purchase-date" type="date" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Weight (Kg)</label>
+                            <input id="ct-weight" type="number" step="0.01" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="0.00">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Size</label>
+                            <select id="ct-size" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="" selected>Select size (optional)</option>
+                                <option value="Small">Small</option>
+                                <option value="Lunchbox">Lunchbox</option>
+                                <option value="Big box">Big box</option>
+                                <option value="0.25 PL">0.25 PL</option>
+                                <option value="0.5 PL">0.5 PL</option>
+                                <option value="1 PL">1 PL</option>
+                                <option value="XXL">XXL</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        <div>
+                            <div class="text-sm font-medium text-gray-900">Requires Certification</div>
+                            <div class="text-xs text-gray-500">Yes/No</div>
+                        </div>
+                        <button type="button" id="ct-requires-cert-toggle" class="relative inline-flex h-6 w-11 items-center rounded-full bg-gray-300 transition-colors" aria-pressed="false">
+                            <span class="inline-block h-5 w-5 transform rounded-full bg-white transition-transform translate-x-0.5"></span>
+                        </button>
+                        <input type="hidden" id="ct-requires-cert" value="false">
+                    </div>
+
+                    <div id="ct-certification-fields" class="grid grid-cols-1 md:grid-cols-2 gap-4" style="display: none;">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Last Certification Date</label>
+                            <input id="ct-last-cert-date" type="date" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Certification Interval (months)</label>
+                            <input id="ct-cert-interval" type="number" min="1" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., 12">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Tool Image</label>
+                            <input id="ct-image-file" type="file" accept="image/*" class="w-full text-sm text-gray-700">
+                            <input type="hidden" id="ct-image-path" value="">
+                        </div>
+                        <div class="flex items-end">
+                            <button type="button" onclick="catalogManager.uploadToolImage()" class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+                                Upload Image
+                            </button>
+                        </div>
+                        <div class="md:col-span-2 text-xs text-gray-500" id="ct-image-status"></div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Notes / Description</label>
+                        <textarea id="ct-notes" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Optional notes about this tool"></textarea>
+                        <p class="text-xs text-gray-500 mt-1">A unique tool number like <span class="font-mono">SP2025-0004</span> is generated on creation.</p>
+                    </div>
+
+                    <div class="flex gap-4 pt-2">
+                        <button type="button" onclick="catalogManager.closeCreateToolModal()" class="flex-1 px-6 py-3 border border-gray-300 rounded-lg">
+                            Cancel
+                        </button>
+                        <button type="submit" class="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                            <span id="ct-submit-text">Create Tool</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Create Tool Modal -->
+    <div id="confirm-create-tool-modal" class="modal" aria-hidden="true">
+        <div class="modal-content">
+            <div class="p-6">
+                <h2 id="confirm-modal-title" class="text-2xl font-bold mb-2 text-gray-900">Confirm Creation</h2>
+                <p id="confirm-modal-desc" class="text-sm text-gray-600 mb-4">Are you sure you want to create this new tool?</p>
+                <div id="confirm-create-tool-summary" class="text-sm bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6"></div>
+                <div class="flex gap-4">
+                    <button type="button" onclick="catalogManager.closeConfirmCreateToolModal()" class="flex-1 px-6 py-3 border border-gray-300 rounded-lg">
+                        Cancel
+                    </button>
+                    <button type="button" id="confirm-modal-btn" onclick="catalogManager.confirmCreateTool()" class="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                        Confirm
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white py-8 mt-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center">
+                <p class="text-sm">&copy; 2024 Equipment Management System. All rights reserved.</p>
+                <p class="text-xs text-gray-400 mt-2">Professional equipment tracking and rental management</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="api-simulation.js"></script>
+    <script src="main.js"></script>
+    <script>
+        
+        // Equipment Catalog Manager
+        class CatalogManager {
+            constructor() {
+                this.equipment = [];
+                this.cart = [];
+                this.currentView = 'grid';
+                this._createToolDraft = null;
+                this._editMode = false;
+                this._editToolId = null;
+                this._editToolSerial = null;
+                this.filters = {
+                    category: '',
+                    status: ['Available'],
+                    minPrice: 0,
+                    maxPrice: Infinity,
+                    search: '',
+                    certification: false
+                };
+                this.init();
+            }
+
+            async init() {
+                // 1. Wait for SQL API to load
+                let attempts = 0;
+                while (!window.sqlAPI && attempts < 10) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    attempts++;
+                }
+
+                if (window.sqlAPI) {
+                    await this.loadEquipment();
+                } else {
+                    console.error("SQL API not loaded");
+                }
+
+                this.setupEventListeners();
+                this.updateCartDisplay();
+            }
+
+            async loadEquipment() {
+                try {
+                    // 2. FETCH REAL DATA FROM SQL
+                    console.log("Fetching equipment from SQL...");
+                    this.equipment = await window.sqlAPI.getEquipment();
+
+                    if (!this.equipment || this.equipment.length === 0) {
+                        console.warn("No equipment found in SQL Database.");
+                        document.getElementById('equipment-count').textContent = "No equipment found in database";
+                    } else {
+                        console.log(`Loaded ${this.equipment.length} items from SQL.`);
+                    }
+
+                    this.renderEquipment();
+                } catch (error) {
+                    console.error("Failed to load equipment from SQL:", error);
+                }
+            }
+
+            setupEventListeners() {
+                // Category filters
+                document.querySelectorAll('.category-item').forEach(item => {
+                    item.addEventListener('click', (e) => {
+                        document.querySelectorAll('.category-item').forEach(i => i.classList.remove('active'));
+                        e.target.classList.add('active');
+                        this.filters.category = e.target.dataset.category;
+                        this.renderEquipment();
+                    });
+                });
+
+                // Status filters
+                document.querySelectorAll('.status-filter').forEach(checkbox => {
+                    checkbox.addEventListener('change', () => {
+                        this.filters.status = Array.from(document.querySelectorAll('.status-filter:checked'))
+                            .map(cb => cb.value);
+                        this.renderEquipment();
+                    });
+                });
+
+                // Price filters
+                document.getElementById('min-price').addEventListener('input', (e) => {
+                    this.filters.minPrice = parseFloat(e.target.value) || 0;
+                    this.renderEquipment();
+                });
+
+                document.getElementById('max-price').addEventListener('input', (e) => {
+                    this.filters.maxPrice = parseFloat(e.target.value) || Infinity;
+                    this.renderEquipment();
+                });
+
+                // Search
+                document.getElementById('search-input').addEventListener('input', (e) => {
+                    this.filters.search = e.target.value.toLowerCase();
+                    this.renderEquipment();
+                });
+
+                // Sort
+                document.getElementById('sort-select').addEventListener('change', (e) => {
+                    this.sortEquipment(e.target.value);
+                });
+
+                // Certification filter
+                document.getElementById('certification-required').addEventListener('change', (e) => {
+                    this.filters.certification = e.target.checked;
+                    this.renderEquipment();
+                });
+
+                // Rental dates
+                document.getElementById('rental-start').addEventListener('change', () => {
+                    this.updateCartTotal();
+                });
+
+                document.getElementById('rental-end').addEventListener('change', () => {
+                    this.updateCartTotal();
+                });
+
+                // Create tool modal
+                const createForm = document.getElementById('create-tool-form');
+                if (createForm) {
+                    createForm.addEventListener('submit', (e) => {
+                        e.preventDefault();
+                        this.openConfirmCreateToolModal();
+                    });
+                }
+
+                const certToggle = document.getElementById('ct-requires-cert-toggle');
+                if (certToggle) {
+                    certToggle.addEventListener('click', () => {
+                        const hidden = document.getElementById('ct-requires-cert');
+                        const current = hidden.value === 'true';
+                        this.setRequiresCertification(!current);
+                    });
+                }
+            }
+
+            async openCreateToolModal() {
+                if (!window.sqlAPI) {
+                    alert('SQL API not loaded');
+                    return;
+                }
+
+                await this.populateCreateToolWarehouses();
+                this.resetCreateToolForm();
+                document.getElementById('create-tool-modal').classList.add('active');
+            }
+
+            closeCreateToolModal() {
+                document.getElementById('create-tool-modal').classList.remove('active');
+                this._editMode = false;
+                this._editToolId = null;
+                this._editToolSerial = null;
+                this.updateCreateModalLabels();
+            }
+
+            async populateCreateToolWarehouses() {
+                const select = document.getElementById('ct-warehouse');
+                if (!select) return;
+
+                select.innerHTML = '<option value="" selected disabled>Loading...</option>';
+                const warehouses = await window.sqlAPI.getWarehouses().catch(() => []);
+
+                if (!warehouses || warehouses.length === 0) {
+                    select.innerHTML = '<option value="" selected disabled>No warehouses found</option>';
+                    return;
+                }
+
+                select.innerHTML = '<option value="" selected disabled>Select a warehouse</option>';
+                warehouses.forEach(w => {
+                    const option = document.createElement('option');
+                    option.value = w.id;
+                    option.textContent = w.name;
+                    select.appendChild(option);
+                });
+            }
+
+            resetCreateToolForm() {
+                const setValue = (id, value) => {
+                    const el = document.getElementById(id);
+                    if (el) el.value = value;
+                };
+
+                setValue('ct-name', '');
+                setValue('ct-manufacturer', '');
+                setValue('ct-model', '');
+                setValue('ct-category', '');
+                setValue('ct-status', 'Available');
+                setValue('ct-condition', 'Good');
+                setValue('ct-daily-cost', '');
+                setValue('ct-purchase-price', '');
+                setValue('ct-weight', '');
+                setValue('ct-size', '');
+                setValue('ct-notes', '');
+                setValue('ct-last-cert-date', '');
+                setValue('ct-cert-interval', '');
+                setValue('ct-image-path', '');
+
+                const today = new Date().toISOString().split('T')[0];
+                setValue('ct-purchase-date', today);
+
+                const imageFile = document.getElementById('ct-image-file');
+                if (imageFile) imageFile.value = '';
+                const imageStatus = document.getElementById('ct-image-status');
+                if (imageStatus) imageStatus.textContent = '';
+
+                this.setRequiresCertification(false);
+                this._createToolDraft = null;
+                this._editMode = false;
+                this._editToolId = null;
+                this._editToolSerial = null;
+                this.updateCreateModalLabels();
+            }
+
+            populateCreateToolForm(tool) {
+                const setValue = (id, value) => {
+                    const el = document.getElementById(id);
+                    if (el) el.value = value ?? '';
+                };
+
+                setValue('ct-name', tool.name || '');
+                setValue('ct-manufacturer', tool.manufacturer || '');
+                setValue('ct-model', tool.model_number || '');
+                setValue('ct-category', tool.category_id || '');
+                setValue('ct-warehouse', tool.warehouse_id || '');
+                setValue('ct-status', tool.status || 'Available');
+                setValue('ct-condition', tool.condition || 'Good');
+                setValue('ct-daily-cost', tool.daily_rental_cost ?? '');
+                setValue('ct-purchase-price', tool.purchase_cost ?? '');
+                setValue('ct-purchase-date', tool.purchase_date ? new Date(tool.purchase_date).toISOString().split('T')[0] : '');
+                setValue('ct-weight', '');
+                setValue('ct-size', '');
+                setValue('ct-notes', '');
+
+                let notes = tool.description || '';
+                let weightKg = null;
+                let size = null;
+                if (typeof notes === 'string' && notes.trim().startsWith('{')) {
+                    try {
+                        const parsed = JSON.parse(notes);
+                        notes = parsed.notes || '';
+                        weightKg = parsed.weightKg ?? null;
+                        size = parsed.size ?? null;
+                    } catch { /* ignore */ }
+                }
+                if (weightKg !== null) setValue('ct-weight', weightKg);
+                if (size) setValue('ct-size', size);
+                setValue('ct-notes', notes || '');
+
+                setValue('ct-last-cert-date', tool.last_certification_date ? new Date(tool.last_certification_date).toISOString().split('T')[0] : '');
+                setValue('ct-cert-interval', tool.certification_interval_months ?? '');
+                setValue('ct-image-path', tool.image_path || '');
+
+                const imageStatus = document.getElementById('ct-image-status');
+                if (imageStatus) imageStatus.textContent = tool.image_path ? `Existing image: ${tool.image_path}` : '';
+
+                this.setRequiresCertification(!!tool.requires_certification);
+                this._createToolDraft = null;
+                this._editToolSerial = tool.serial_number || tool.serialNumber || null;
+            }
+
+            async startEditFromDetails(equipmentId) {
+                const equipment = this.equipment.find(e => e.id === equipmentId);
+                if (!equipment) return;
+
+                await this.populateCreateToolWarehouses();
+                this.populateCreateToolForm(equipment);
+                this._editMode = true;
+                this._editToolId = equipment.id;
+                this.updateCreateModalLabels();
+
+                this.closeModal();
+                document.getElementById('create-tool-modal').classList.add('active');
+            }
+
+            setRequiresCertification(enabled) {
+                const hidden = document.getElementById('ct-requires-cert');
+                const toggle = document.getElementById('ct-requires-cert-toggle');
+                const certFields = document.getElementById('ct-certification-fields');
+                const lastCertInput = document.getElementById('ct-last-cert-date');
+                const intervalInput = document.getElementById('ct-cert-interval');
+                if (!hidden || !toggle) return;
+
+                hidden.value = enabled ? 'true' : 'false';
+                toggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+
+                if (certFields) {
+                    certFields.style.display = enabled ? 'grid' : 'none';
+                }
+                if (lastCertInput) {
+                    lastCertInput.required = enabled;
+                    if (!enabled) lastCertInput.value = '';
+                }
+                if (intervalInput) {
+                    intervalInput.required = enabled;
+                    if (!enabled) intervalInput.value = '';
+                }
+
+                if (enabled) {
+                    toggle.classList.remove('bg-gray-300');
+                    toggle.classList.add('bg-green-600');
+                    toggle.querySelector('span').classList.remove('translate-x-0.5');
+                    toggle.querySelector('span').classList.add('translate-x-5');
+                } else {
+                    toggle.classList.remove('bg-green-600');
+                    toggle.classList.add('bg-gray-300');
+                    toggle.querySelector('span').classList.remove('translate-x-5');
+                    toggle.querySelector('span').classList.add('translate-x-0.5');
+                }
+            }
+
+            updateCreateModalLabels() {
+                const isEdit = this._editMode;
+                const title = document.getElementById('ct-modal-title');
+                const desc = document.getElementById('ct-modal-desc');
+                const submit = document.getElementById('ct-submit-text');
+                const confirmTitle = document.getElementById('confirm-modal-title');
+                const confirmDesc = document.getElementById('confirm-modal-desc');
+                const confirmBtn = document.getElementById('confirm-modal-btn');
+
+                if (title) title.textContent = isEdit ? 'Edit Tool' : 'Create New Tool';
+                if (desc) desc.textContent = isEdit ? 'Update tool details, then save your changes.' : 'Fill out all relevant tool details, then click Create Tool.';
+                if (submit) submit.textContent = isEdit ? 'Save Changes' : 'Create Tool';
+                if (confirmTitle) confirmTitle.textContent = isEdit ? 'Confirm Update' : 'Confirm Creation';
+                if (confirmDesc) confirmDesc.textContent = isEdit ? 'Are you sure you want to update this tool?' : 'Are you sure you want to create this new tool?';
+                if (confirmBtn) confirmBtn.textContent = isEdit ? 'Save Changes' : 'Confirm';
+            }
+
+            getCreateToolFormData() {
+                const getValue = (id) => (document.getElementById(id)?.value || '').trim();
+                const getNumber = (id) => {
+                    const raw = getValue(id);
+                    if (raw === '') return null;
+                    const num = Number(raw);
+                    return Number.isFinite(num) ? num : null;
+                };
+
+                const name = getValue('ct-name');
+                const manufacturer = getValue('ct-manufacturer');
+                const modelNumber = getValue('ct-model');
+                const categoryId = parseInt(getValue('ct-category'), 10);
+                const warehouseId = parseInt(getValue('ct-warehouse'), 10);
+                const status = getValue('ct-status') || 'Available';
+                const condition = getValue('ct-condition') || 'Good';
+                const dailyRentalCost = getNumber('ct-daily-cost');
+                const purchasePrice = getNumber('ct-purchase-price');
+                const purchaseDate = getValue('ct-purchase-date');
+                const weightKg = getNumber('ct-weight');
+                const size = getValue('ct-size');
+                const notes = getValue('ct-notes');
+                const requiresCertification = (getValue('ct-requires-cert') === 'true');
+                const lastCertificationDate = getValue('ct-last-cert-date');
+                const certificationIntervalMonths = getNumber('ct-cert-interval');
+                const imagePath = getValue('ct-image-path');
+
+                return {
+                    name,
+                    manufacturer,
+                    modelNumber,
+                    categoryId,
+                    warehouseId,
+                    status,
+                    condition,
+                    dailyRentalCost,
+                    purchasePrice,
+                    purchaseDate,
+                    weightKg,
+                    size,
+                    notes,
+                    requiresCertification,
+                    lastCertificationDate,
+                    certificationIntervalMonths,
+                    imagePath
+                };
+            }
+
+            openConfirmCreateToolModal() {
+                this.updateCreateModalLabels();
+                const data = this.getCreateToolFormData();
+
+                if (!data.name) {
+                    alert('Tool Name is required');
+                    return;
+                }
+                if (!Number.isFinite(data.categoryId)) {
+                    alert('Category is required');
+                    return;
+                }
+                if (!Number.isFinite(data.warehouseId)) {
+                    alert('Warehouse is required');
+                    return;
+                }
+                if (data.requiresCertification) {
+                    if (!data.lastCertificationDate) {
+                        alert('Last certification date is required for certified tools');
+                        return;
+                    }
+                    if (!Number.isFinite(data.certificationIntervalMonths) || data.certificationIntervalMonths <= 0) {
+                        alert('Certification interval (months) must be greater than 0');
+                        return;
+                    }
+                }
+
+                let expiryDate = null;
+                if (data.requiresCertification && data.lastCertificationDate && Number.isFinite(data.certificationIntervalMonths)) {
+                    const last = new Date(data.lastCertificationDate);
+                    if (!Number.isNaN(last.getTime())) {
+                        expiryDate = new Date(last);
+                        expiryDate.setMonth(expiryDate.getMonth() + data.certificationIntervalMonths);
+                    }
+                }
+
+                const formatNumber = (value) => value ?? '-';
+
+                this._createToolDraft = data;
+                const summary = document.getElementById('confirm-create-tool-summary');
+                if (summary) {
+                    summary.innerHTML = `
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <div><strong>Name:</strong> ${this.escapeHtml(data.name)}</div>
+                            <div><strong>Category ID:</strong> ${data.categoryId}</div>
+                            <div><strong>Warehouse ID:</strong> ${data.warehouseId}</div>
+                            <div><strong>Status:</strong> ${this.escapeHtml(data.status)}</div>
+                            <div><strong>Condition:</strong> ${this.escapeHtml(data.condition)}</div>
+                            <div><strong>Purchase Price:</strong> ${formatNumber(data.purchasePrice)}</div>
+                            <div><strong>Weight (Kg):</strong> ${formatNumber(data.weightKg)}</div>
+                            <div><strong>Size:</strong> ${data.size ? this.escapeHtml(data.size) : '-'}</div>
+                            <div><strong>Requires Certification:</strong> ${data.requiresCertification ? 'Yes' : 'No'}</div>
+                            ${data.requiresCertification ? `<div><strong>Last Certified:</strong> ${data.lastCertificationDate || '-'}</div>` : ''}
+                            ${data.requiresCertification ? `<div><strong>Cert Interval:</strong> ${data.certificationIntervalMonths} months</div>` : ''}
+                            ${data.requiresCertification ? `<div><strong>Expires:</strong> ${expiryDate ? expiryDate.toLocaleDateString() : '-'}</div>` : ''}
+                            <div><strong>Image Upload:</strong> ${data.imagePath ? 'Ready' : 'Not uploaded'}</div>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-3">A tool number like <span class="font-mono">SP${new Date().getFullYear()}-0001</span> is generated when you confirm.</div>
+                    `;
+                }
+
+                document.getElementById('confirm-create-tool-modal').classList.add('active');
+            }
+
+            closeConfirmCreateToolModal() {
+                document.getElementById('confirm-create-tool-modal').classList.remove('active');
+            }
+
+            async confirmCreateTool() {
+                if (!this._createToolDraft) {
+                    alert('Missing tool details. Please reopen the create tool modal.');
+                    return;
+                }
+                if (!window.sqlAPI?.createEquipment || (this._editMode && !window.sqlAPI?.updateEquipment)) {
+                    alert('Equipment API not available');
+                    return;
+                }
+
+                const data = this._createToolDraft;
+                const descriptionPayload = {
+                    notes: data.notes || null,
+                    weightKg: data.weightKg,
+                    size: data.size || null
+                };
+
+                const payload = {
+                    toolID: this._editToolId || 0,
+                    toolName: data.name,
+                    manufacturer: data.manufacturer || null,
+                    modelNumber: data.modelNumber || null,
+                    serialNumber: this._editToolSerial,
+                    categoryID: data.categoryId,
+                    warehouseID: data.warehouseId,
+                    status: data.status,
+                    condition: data.condition,
+                    dailyRentalCost: data.dailyRentalCost ?? 0,
+                    purchaseCost: data.purchasePrice ?? 0,
+                    calibrationInterval: data.certificationIntervalMonths ?? null,
+                    lastCalibration: data.lastCertificationDate ? new Date(data.lastCertificationDate).toISOString() : null,
+                    imagePath: data.imagePath || null,
+                    requiresCertification: !!data.requiresCertification,
+                    purchaseDate: data.purchaseDate ? new Date(data.purchaseDate).toISOString() : new Date().toISOString(),
+                    description: JSON.stringify(descriptionPayload)
+                };
+
+                const wasEdit = this._editMode && this._editToolId;
+                let result = null;
+                if (wasEdit) {
+                    result = await window.sqlAPI.updateEquipment(this._editToolId, payload);
+                    if (!result) {
+                        alert('Failed to update tool');
+                        return;
+                    }
+                } else {
+                    result = await window.sqlAPI.createEquipment(payload);
+                    if (!result) {
+                        alert('Failed to create tool');
+                        return;
+                    }
+                }
+
+                this.closeConfirmCreateToolModal();
+                this.closeCreateToolModal();
+                this._createToolDraft = null;
+                this._editMode = false;
+                this._editToolId = null;
+                this.updateCreateModalLabels();
+
+                await this.loadEquipment();
+                alert(`Tool ${wasEdit ? 'updated' : 'created'}: ${result.serial_number || result.serialNumber || 'SP...'} (${result.name || result.toolName || 'Tool'})`);
+            }
+
+            async uploadToolImage() {
+                const fileInput = document.getElementById('ct-image-file');
+                const statusEl = document.getElementById('ct-image-status');
+                const hiddenPath = document.getElementById('ct-image-path');
+
+                if (!fileInput || fileInput.files.length === 0) {
+                    if (statusEl) statusEl.textContent = 'Choose an image file first.';
+                    return;
+                }
+                if (!window.sqlAPI?.uploadEquipmentImage) {
+                    alert('Image upload API not available');
+                    return;
+                }
+
+                const file = fileInput.files[0];
+                if (statusEl) statusEl.textContent = 'Uploading image...';
+
+                try {
+                    const path = await window.sqlAPI.uploadEquipmentImage(file);
+                    if (hiddenPath) hiddenPath.value = path;
+                    if (statusEl) statusEl.textContent = `Uploaded: ${path}`;
+                } catch (err) {
+                    if (hiddenPath) hiddenPath.value = '';
+                    if (statusEl) statusEl.textContent = `Upload failed: ${err.message || err}`;
+                }
+            }
+
+            escapeHtml(text) {
+                return String(text)
+                    .replaceAll('&', '&amp;')
+                    .replaceAll('<', '&lt;')
+                    .replaceAll('>', '&gt;')
+                    .replaceAll('"', '&quot;')
+                    .replaceAll("'", '&#039;');
+            }
+
+            renderEquipment() {
+                const container = document.getElementById('equipment-grid');
+                const filteredEquipment = this.filterEquipment();
+
+                container.innerHTML = '';
+
+                if (filteredEquipment.length === 0) {
+                    container.innerHTML = `
+                        <div class="col-span-full text-center py-12">
+                            <svg class="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 12h6m-6-4h6m2 5.291A7.962 7.962 0 0112 15c-2.34 0-4.29-1.009-5.824-2.562M15 6.306a7.962 7.962 0 00-6 0M4.349 4.349A11.958 11.958 0 0112 3c4.285 0 7.908 1.74 10.657 4.349M3 3h2l.4 2M7 13h10l4-8H5.4m0 0L7 13m0 0l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 13v4a2 2 0 01-2 2H9a2 2 0 01-2-2v-4m8 0V9a2 2 0 00-2-2H9a2 2 0 00-2 2v4.01"></path>
+                            </svg>
+                            <h3 class="text-lg font-medium text-gray-900 mb-2">No equipment found</h3>
+                            <p class="text-gray-500">Try adjusting your filters or search terms</p>
+                        </div>
+                    `;
+                    document.getElementById('equipment-count').textContent = 'No equipment found';
+                    return;
+                }
+
+                filteredEquipment.forEach(equipment => {
+                    const card = this.createEquipmentCard(equipment);
+                    container.appendChild(card);
+                });
+
+                document.getElementById('equipment-count').textContent = `${filteredEquipment.length} equipment items found`;
+            }
+
+            filterEquipment() {
+                return this.equipment.filter(equipment => {
+                    // Category filter
+                    if (this.filters.category && equipment.category_id != this.filters.category) {
+                        return false;
+                    }
+
+                    // Status filter
+                    // Handle case where status might be null or undefined
+                    const status = equipment.status || 'Available';
+                    if (!this.filters.status.includes(status)) {
+                        return false;
+                    }
+
+                    // Price filter
+                    const price = equipment.daily_rental_cost || 0;
+                    if (price < this.filters.minPrice || price > this.filters.maxPrice) {
+                        return false;
+                    }
+
+                    // Search filter
+                    if (this.filters.search) {
+                        const searchTerm = this.filters.search;
+                        const searchableText = `${equipment.name} ${equipment.serial_number} ${equipment.model_number} ${equipment.manufacturer}`.toLowerCase();
+                        if (!searchableText.includes(searchTerm)) {
+                            return false;
+                        }
+                    }
+
+                    // Certification filter
+                    if (this.filters.certification && !equipment.requires_certification) {
+                        return false;
+                    }
+
+                    return true;
+                });
+            }
+
+            getCertificationStatus(equipment) {
+                if (!equipment.requires_certification) {
+                    return { css: '', label: null, expiryDate: null, expired: false, expiring: false };
+                }
+
+                const expiryRaw = equipment.certificate_expiry_date || equipment.next_calibration_date;
+                const expiryDate = expiryRaw ? new Date(expiryRaw) : null;
+
+                if (!expiryDate || Number.isNaN(expiryDate.getTime())) {
+                    return { css: 'cert-expired', label: 'Missing expiry', expiryDate: null, expired: true, expiring: false };
+                }
+
+                const today = new Date();
+                const diffDays = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
+
+                if (diffDays < 0) {
+                    return { css: 'cert-expired', label: 'Expired', expiryDate, expired: true, expiring: false };
+                }
+                if (diffDays <= 90) {
+                    return { css: 'cert-expiring', label: 'Expiring soon', expiryDate, expired: false, expiring: true };
+                }
+
+                return { css: '', label: null, expiryDate, expired: false, expiring: false };
+            }
+
+            createEquipmentCard(equipment) {
+                const certStatus = this.getCertificationStatus(equipment);
+                const card = document.createElement('div');
+                card.className = `equipment-card relative${certStatus.css ? ' ' + certStatus.css : ''}`;
+
+                // Safe check for image path
+                const imageHtml = (equipment.image_path && equipment.image_path !== "") ?
+                    `<img src="${equipment.image_path}" alt="${equipment.name}" class="equipment-image" onerror="this.style.display='none'">` :
+                    `<div class="equipment-image placeholder">
+                        <svg class="w-16 h-16" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clip-rule="evenodd"></path>
+                        </svg>
+                    </div>`;
+
+                const status = equipment.status || 'Available';
+                const price = equipment.daily_rental_cost || 0;
+                const expiryText = certStatus.expiryDate ? certStatus.expiryDate.toLocaleDateString() : null;
+
+                card.innerHTML = `
+                    ${imageHtml}
+                    <div class="status-badge status-${status.toLowerCase()}">${status}</div>
+                    <div class="p-6">
+                        <div class="flex items-start justify-between mb-2">
+                            <h3 class="text-lg font-semibold text-gray-900 line-clamp-2">${equipment.name}</h3>
+                        </div>
+                        <div class="text-sm text-gray-600 mb-2">
+                            <span class="font-medium">${equipment.manufacturer || ''}</span> • ${equipment.model_number || ''}
+                        </div>
+                        <div class="text-sm text-gray-600 mb-3">
+                            <span class="inline-block bg-gray-100 rounded px-2 py-1 text-xs">Category ${equipment.category_id}</span>
+                            ${equipment.requires_certification ? '<span class="inline-block bg-yellow-100 text-yellow-800 rounded px-2 py-1 text-xs ml-1">Certification Required</span>' : ''}
+                            ${equipment.requires_certification && certStatus.label ? `<span class="inline-block bg-red-100 text-red-700 rounded px-2 py-1 text-xs ml-1">${certStatus.label}${expiryText ? ` (${expiryText})` : ''}</span>` : ''}
+                        </div>
+                        <p class="text-sm text-gray-700 mb-4 line-clamp-2">${equipment.description || ''}</p>
+                        
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="price-tag">$${price.toFixed(2)}</div>
+                            <div class="text-sm text-gray-500">per day</div>
+                        </div>
+                        
+                        <div class="flex items-center justify-between text-sm text-gray-600 mb-4">
+                            <span>Condition: <span class="font-medium">${equipment.condition || 'Unknown'}</span></span>
+                            ${equipment.requires_certification && expiryText ? `<span>Cert: ${expiryText}</span>` : ''}
+                        </div>
+                        
+                        <div class="flex space-x-2">
+                            <button onclick="catalogManager.viewDetails(${equipment.id})" 
+                                    class="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors font-medium">
+                                View Details
+                            </button>
+                            <button onclick="catalogManager.addToCart(${equipment.id})" 
+                                    class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium"
+                                    ${status !== 'Available' ? 'disabled' : ''}>
+                                ${status === 'Available' ? 'Add to Cart' : 'Unavailable'}
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                return card;
+            }
+
+            sortEquipment(sortBy) {
+                switch (sortBy) {
+                    case 'name':
+                        this.equipment.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+                        break;
+                    case 'price-low':
+                        this.equipment.sort((a, b) => a.daily_rental_cost - b.daily_rental_cost);
+                        break;
+                    case 'price-high':
+                        this.equipment.sort((a, b) => b.daily_rental_cost - a.daily_rental_cost);
+                        break;
+                    // Other sorts can be added here
+                }
+                this.renderEquipment();
+            }
+
+            addToCart(equipmentId) {
+                const equipment = this.equipment.find(e => e.id === equipmentId);
+                if (!equipment || equipment.status !== 'Available') {
+                    equipmentManager.showNotification('Equipment not available for rental', 'error');
+                    return;
+                }
+
+                const existingItem = this.cart.find(item => item.id === equipmentId);
+                if (existingItem) {
+                    existingItem.quantity += 1;
+                } else {
+                    this.cart.push({
+                        ...equipment,
+                        quantity: 1
+                    });
+                }
+
+                this.updateCartDisplay();
+                equipmentManager.showNotification(`${equipment.name} added to cart`, 'success');
+
+                // Animate the add to cart action
+                anime({
+                    targets: `[data-equipment-id="${equipmentId}"]`,
+                    scale: [1, 1.05, 1],
+                    duration: 300,
+                    easing: 'easeInOutQuad'
+                });
+            }
+
+            removeFromCart(equipmentId) {
+                this.cart = this.cart.filter(item => item.id !== equipmentId);
+                this.updateCartDisplay();
+            }
+
+            updateQuantity(equipmentId, change) {
+                const item = this.cart.find(item => item.id === equipmentId);
+                if (item) {
+                    item.quantity += change;
+                    if (item.quantity <= 0) {
+                        this.removeFromCart(equipmentId);
+                    } else {
+                        this.updateCartDisplay();
+                    }
+                }
+            }
+
+            updateCartDisplay() {
+                const cartContainer = document.getElementById('cart-items');
+                const cartBadge = document.getElementById('cart-badge');
+
+                if (this.cart.length === 0) {
+                    cartContainer.innerHTML = `
+                        <div class="text-center text-gray-500 py-8">
+                            <svg class="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4m0 0L7 13m0 0l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 13v4a2 2 0 01-2 2H9a2 2 0 01-2-2v-4m8 0V9a2 2 0 00-2-2H9a2 2 0 00-2 2v4.01"></path>
+                            </svg>
+                            <p>Your cart is empty</p>
+                            <p class="text-sm mt-2">Add equipment to get started</p>
+                        </div>
+                    `;
+                    cartBadge.style.display = 'none';
+                } else {
+                    cartContainer.innerHTML = '';
+                    this.cart.forEach(item => {
+                        const price = item.daily_rental_cost || 0;
+                        const cartItem = document.createElement('div');
+                        cartItem.className = 'cart-item';
+                        cartItem.innerHTML = `
+                            <div class="flex items-start justify-between">
+                                <div class="flex-1">
+                                    <h4 class="font-medium text-gray-900">${item.name}</h4>
+                                    <p class="text-sm text-gray-600">${item.serial_number || ''}</p>
+                                    <p class="text-sm font-medium text-blue-600">$${price.toFixed(2)}/day</p>
+                                </div>
+                                <button onclick="catalogManager.removeFromCart(${item.id})" class="text-red-600 hover:text-red-800">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div class="quantity-control mt-2">
+                                <button onclick="catalogManager.updateQuantity(${item.id}, -1)" class="quantity-btn">-</button>
+                                <span class="px-3 font-medium">${item.quantity}</span>
+                                <button onclick="catalogManager.updateQuantity(${item.id}, 1)" class="quantity-btn">+</button>
+                            </div>
+                            <div class="text-right mt-2 font-medium">
+                                Subtotal: $${(price * item.quantity).toFixed(2)}
+                            </div>
+                        `;
+                        cartContainer.appendChild(cartItem);
+                    });
+
+                    const totalItems = this.cart.reduce((sum, item) => sum + item.quantity, 0);
+                    cartBadge.textContent = totalItems;
+                    cartBadge.style.display = 'flex';
+                }
+
+                this.updateCartTotal();
+            }
+
+            updateCartTotal() {
+                const startDate = document.getElementById('rental-start').value;
+                const endDate = document.getElementById('rental-end').value;
+                const checkoutBtn = document.getElementById('checkout-btn');
+
+                let total = 0;
+                let rentalDays = 1;
+
+                if (startDate && endDate) {
+                    const start = new Date(startDate);
+                    const end = new Date(endDate);
+                    rentalDays = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+                }
+
+                this.cart.forEach(item => {
+                    const price = item.daily_rental_cost || 0;
+                    total += price * item.quantity * rentalDays;
+                });
+
+                document.getElementById('cart-total').textContent = `$${total.toFixed(2)}`;
+
+                // Enable/disable checkout button
+                checkoutBtn.disabled = this.cart.length === 0 || !startDate || !endDate;
+
+                if (checkoutBtn.disabled) {
+                    checkoutBtn.title = this.cart.length === 0 ? 'Add items to cart first' : 'Select rental dates';
+                } else {
+                    checkoutBtn.title = '';
+                }
+            }
+
+            viewDetails(equipmentId) {
+                const equipment = this.equipment.find(e => e.id === equipmentId);
+                if (!equipment) return;
+
+                const modal = document.getElementById('equipment-modal');
+                const modalBody = document.getElementById('modal-body');
+
+                const price = equipment.daily_rental_cost || 0;
+                const status = equipment.status || 'Unknown';
+                const toolNumber = equipment.serial_number || 'N/A';
+                const manufacturer = equipment.manufacturer || '-';
+                const modelNumber = equipment.model_number || '-';
+                const certStatus = this.getCertificationStatus(equipment);
+                const expiryText = certStatus.expiryDate ? certStatus.expiryDate.toLocaleDateString() : 'Not set';
+                const lastCertified = equipment.last_certification_date ? new Date(equipment.last_certification_date).toLocaleDateString() : 'Not set';
+                const purchaseDate = equipment.purchase_date ? new Date(equipment.purchase_date).toLocaleDateString() : '-';
+                const purchaseCost = equipment.purchase_cost ?? '-';
+                const currentValue = equipment.current_value ?? '-';
+
+                let notes = equipment.description || '';
+                let weightKg = null;
+                let size = null;
+                if (typeof notes === 'string' && notes.trim().startsWith('{')) {
+                    try {
+                        const parsed = JSON.parse(notes);
+                        notes = parsed.notes || '';
+                        weightKg = parsed.weightKg ?? null;
+                        size = parsed.size ?? null;
+                    } catch { /* ignore */ }
+                }
+
+                modalBody.innerHTML = `
+                    <div class="p-6">
+                        <div class="flex items-start justify-between mb-4">
+                            <h2 class="text-2xl font-bold text-gray-900">${equipment.name}</h2>
+                            <div class="flex items-center space-x-2">
+                                <button onclick="catalogManager.startEditFromDetails(${equipment.id})" class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Edit</button>
+                                <button onclick="catalogManager.closeModal()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="space-y-4">
+                            <div><span class="status-badge status-${status.toLowerCase()}">${status}</span></div>
+                            <div class="price-tag text-3xl">$${price.toFixed(2)}</div>
+                            ${equipment.image_path ? `<img src="${equipment.image_path}" alt="${equipment.name}" class="w-full h-48 object-cover rounded-lg border">` : ''}
+                            <div><strong>Tool Number:</strong> ${toolNumber}</div>
+                            <div><strong>Manufacturer:</strong> ${manufacturer}</div>
+                            <div><strong>Model Number:</strong> ${modelNumber}</div>
+                            <div><strong>Category ID:</strong> ${equipment.category_id ?? '-'}</div>
+                            <div><strong>Warehouse ID:</strong> ${equipment.warehouse_id ?? '-'}</div>
+                            <div><strong>Condition:</strong> ${equipment.condition || '-'}</div>
+                            <div><strong>Location Code:</strong> ${equipment.location_code || '-'}</div>
+                            ${weightKg !== null ? `<div><strong>Weight (Kg):</strong> ${weightKg}</div>` : ''}
+                            ${size ? `<div><strong>Size:</strong> ${this.escapeHtml(size)}</div>` : ''}
+                            <div><strong>Purchase Date:</strong> ${purchaseDate}</div>
+                            <div><strong>Purchase Cost:</strong> ${purchaseCost}</div>
+                            <div><strong>Current Value:</strong> ${currentValue}</div>
+                            <div><strong>Requires Certification:</strong> ${equipment.requires_certification ? 'Yes' : 'No'}</div>
+                            ${equipment.requires_certification ? `<div><strong>Last Certified:</strong> ${lastCertified}</div>` : ''}
+                            ${equipment.requires_certification ? `<div><strong>Cert Interval (months):</strong> ${equipment.certification_interval_months ?? '-'}</div>` : ''}
+                            ${equipment.requires_certification ? `<div><strong>Certificate Expires:</strong> ${expiryText}${certStatus.label ? ` (${certStatus.label})` : ''}</div>` : ''}
+                            <div class="border-t pt-4"><p>${notes ? this.escapeHtml(notes) : ''}</p></div>
+                        </div>
+                        <div class="flex space-x-4 mt-6 pt-6 border-t">
+                            <button onclick="catalogManager.closeModal()" class="flex-1 px-6 py-3 border border-gray-300 rounded-lg">Close</button>
+                            <button onclick="catalogManager.addToCart(${equipment.id}); catalogManager.closeModal();" class="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg">Add to Cart</button>
+                        </div>
+                    </div>
+                `;
+
+                modal.classList.add('active');
+            }
+
+            closeModal() {
+                document.getElementById('equipment-modal').classList.remove('active');
+            }
+
+            toggleCart() {
+                const sidebar = document.querySelector('.cart-sidebar');
+                const overlay = document.querySelector('.cart-overlay');
+                sidebar.classList.toggle('open');
+                overlay.classList.toggle('active');
+            }
+
+            proceedToCheckout() {
+                // Implementation for checkout
+                if (this.cart.length === 0) {
+                    alert('Your cart is empty');
+                    return;
+                }
+                alert('Checkout feature coming soon!');
+            }
+
+            performSearch() {
+                const searchTerm = document.getElementById('search-input').value;
+                this.filters.search = searchTerm.toLowerCase();
+                this.renderEquipment();
+            }
+
+            clearFilters() {
+                this.filters = { category: '', status: ['Available'], minPrice: 0, maxPrice: Infinity, search: '', certification: false };
+                this.renderEquipment();
+            }
+
+            loadMore() {
+                // Implementation for pagination
+            }
+
+            setView(view) {
+                this.currentView = view;
+                // Implementation for view switching
+            }
+        }
+
+
+
+        // Initialize catalog manager
+        const catalogManager = new CatalogManager();
+
+        // Close modal when clicking outside
+        document.getElementById('equipment-modal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) {
+                catalogManager.closeModal();
+            }
+        });
+
+        document.getElementById('create-tool-modal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) {
+                catalogManager.closeCreateToolModal();
+            }
+        });
+
+        document.getElementById('confirm-create-tool-modal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) {
+                catalogManager.closeConfirmCreateToolModal();
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            catalogManager.closeConfirmCreateToolModal();
+            catalogManager.closeCreateToolModal();
+            catalogManager.closeModal();
+        });
+    </script>
+</body>
+</html>

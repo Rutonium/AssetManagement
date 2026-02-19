@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Warehouse Management - Equipment Management System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --color-primary: #2D3748;
+            --color-secondary: #4A5568;
+            --color-success: #38A169;
+            --color-warning: #D69E2E;
+            --color-error: #E53E3E;
+            --color-background: #FAFAFA;
+            --font-primary: 'Inter', sans-serif;
+        }
+        
+        body {
+            font-family: var(--font-primary);
+            background: linear-gradient(135deg, #FAFAFA 0%, #F7FAFC 100%);
+            min-height: 100vh;
+        }
+        
+        .warehouse-grid {
+            display: grid;
+            grid-template-columns: repeat(26, 1fr);
+            grid-template-rows: repeat(50, 1fr);
+            gap: 2px;
+            background-color: #E2E8F0;
+            padding: 8px;
+            border-radius: 8px;
+            max-height: 600px;
+            overflow: auto;
+        }
+        
+        .grid-cell {
+            aspect-ratio: 1;
+            border: 1px solid #CBD5E0;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: 500;
+            min-height: 24px;
+            min-width: 24px;
+        }
+        
+        .grid-cell.available {
+            background-color: var(--color-success);
+            color: white;
+        }
+        
+        .grid-cell.occupied {
+            background-color: var(--color-error);
+            color: white;
+        }
+        
+        .grid-cell.reserved {
+            background-color: var(--color-warning);
+            color: white;
+        }
+        
+        .grid-cell:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            z-index: 10;
+            position: relative;
+        }
+        
+        .grid-cell.selected {
+            border: 3px solid var(--color-primary);
+            transform: scale(1.05);
+        }
+        
+        .equipment-card {
+            transition: all 0.3s ease;
+            border-left: 4px solid transparent;
+        }
+        
+        .equipment-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+            border-left-color: var(--color-success);
+        }
+        
+        .zone-section {
+            margin-bottom: 2rem;
+            padding: 1rem;
+            border-radius: 8px;
+            background: white;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .zone-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #E2E8F0;
+        }
+        
+        .nav-link {
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        
+        .nav-link:hover {
+            color: var(--color-success);
+        }
+        
+        .nav-link::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background-color: var(--color-success);
+            transition: width 0.2s ease;
+        }
+        
+        .nav-link:hover::after {
+            width: 100%;
+        }
+        
+        .hero-section {
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+            color: white;
+            padding: 1.5rem 0;
+            margin-bottom: 2rem;
+        }
+        
+        .control-panel {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+        }
+        
+        .location-info {
+            background: #F7FAFC;
+            border: 1px solid #E2E8F0;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .equipment-item {
+            background: white;
+            border: 1px solid #E2E8F0;
+            border-radius: 6px;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .equipment-item:hover {
+            background: #F7FAFC;
+            border-color: var(--color-success);
+        }
+        
+        .equipment-item.selected {
+            background: var(--color-success);
+            color: white;
+            border-color: var(--color-success);
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        
+        .zoom-controls {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .zoom-btn {
+            padding: 0.5rem;
+            border: 1px solid #CBD5E0;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .zoom-btn:hover {
+            background: #F7FAFC;
+            border-color: var(--color-success);
+        }
+        
+        .assignment-mode {
+            background: #EBF8FF;
+            border: 2px dashed #4299E1;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="bg-white shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <h1 class="text-xl font-bold text-gray-800">Equipment Manager</h1>
+                    </div>
+                    <div class="hidden md:block">
+                        <div class="ml-10 flex items-baseline space-x-4">
+                            <a href="index.html" class="nav-link text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Dashboard</a>
+                            <a href="warehouse.html" class="nav-link text-gray-900 font-medium px-3 py-2 rounded-md text-sm">Warehouse</a>
+                            <a href="catalog.html" class="nav-link text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Equipment Catalog</a>
+                            <a href="rentals.html" class="nav-link text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Rentals</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="text-sm text-gray-600">
+                        <span class="user-full-name">Loading...</span>
+                        <span class="text-xs text-gray-500 user-role">Admin</span>
+                    </div>
+                    <button class="bg-gray-800 text-white px-3 py-1 rounded text-sm hover:bg-gray-700">
+                        Logout
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <div class="hero-section">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center">
+                <h1 class="text-3xl font-bold mb-2">Warehouse Management</h1>
+                <p class="text-lg opacity-90">Visual equipment location and warehouse organization</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
+        <!-- Warehouse Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="text-2xl font-bold text-gray-900" id="total-locations">260</div>
+                <div class="text-sm text-gray-500">Total Locations</div>
+            </div>
+            <div class="stat-card">
+                <div class="text-2xl font-bold text-green-600" id="occupied-locations">8</div>
+                <div class="text-sm text-gray-500">Occupied</div>
+            </div>
+            <div class="stat-card">
+                <div class="text-2xl font-bold text-blue-600" id="available-locations">252</div>
+                <div class="text-sm text-gray-500">Available</div>
+            </div>
+            <div class="stat-card">
+                <div class="text-2xl font-bold text-yellow-600" id="reserved-locations">0</div>
+                <div class="text-sm text-gray-500">Reserved</div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="control-panel">
+            <div class="flex flex-wrap items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-900">Warehouse Controls</h3>
+                <div class="zoom-controls">
+                    <button class="zoom-btn" onclick="zoomIn()" title="Zoom In">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                        </svg>
+                    </button>
+                    <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path>
+                        </svg>
+                    </button>
+                    <button class="zoom-btn" onclick="resetZoom()" title="Reset Zoom">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="flex flex-wrap gap-4">
+                <select id="warehouse-selector" class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="1">Main Warehouse</option>
+                </select>
+                
+                <select id="zone-filter" class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">All Zones</option>
+                    <option value="A">Zone A</option>
+                    <option value="B">Zone B</option>
+                    <option value="C">Zone C</option>
+                    <option value="D">Zone D</option>
+                </select>
+                
+                <button onclick="toggleAssignmentMode()" id="assignment-toggle" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+                    Assign Equipment
+                </button>
+                
+                <button onclick="showLocationHistory()" class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors">
+                    Location History
+                </button>
+            </div>
+        </div>
+
+        <!-- Assignment Mode Indicator -->
+        <div id="assignment-mode" class="assignment-mode" style="display: none;">
+            <div class="flex items-center justify-center">
+                <svg class="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <span class="font-medium">Assignment Mode Active: Select equipment and then click a location to assign</span>
+                <button onclick="cancelAssignmentMode()" class="ml-4 px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700">
+                    Cancel
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            <!-- Warehouse Grid -->
+            <div class="lg:col-span-3">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-gray-900">Warehouse Layout</h3>
+                        <div class="text-sm text-gray-500">
+                            Click on cells to view location details
+                        </div>
+                    </div>
+                    
+                    <!-- Grid Legend -->
+                    <div class="flex items-center justify-center space-x-6 mb-4 text-sm">
+                        <div class="flex items-center">
+                            <div class="w-4 h-4 bg-green-500 rounded mr-2"></div>
+                            <span>Available</span>
+                        </div>
+                        <div class="flex items-center">
+                            <div class="w-4 h-4 bg-red-500 rounded mr-2"></div>
+                            <span>Occupied</span>
+                        </div>
+                        <div class="flex items-center">
+                            <div class="w-4 h-4 bg-yellow-500 rounded mr-2"></div>
+                            <span>Reserved</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Warehouse Grid -->
+                    <div id="warehouse-grid-container" class="border rounded-lg p-4 bg-gray-50">
+                        <div id="warehouse-grid" class="warehouse-grid">
+                            <!-- Grid cells will be generated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sidebar -->
+            <div class="space-y-6">
+                <!-- Location Details -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Location Details</h3>
+                    <div id="location-details">
+                        <div class="text-center text-gray-500 py-8">
+                            <svg class="w-12 h-12 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            </svg>
+                            <p>Select a location to view details</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Equipment Assignment -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Available Equipment</h3>
+                    <div class="mb-4">
+                        <input type="text" id="equipment-search" placeholder="Search equipment..." 
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div id="equipment-list" class="space-y-2 max-h-64 overflow-y-auto">
+                        <!-- Equipment items will be populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Warehouse Statistics -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Zone Statistics</h3>
+                    <div id="zone-statistics" class="space-y-3">
+                        <!-- Zone statistics will be populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white py-8 mt-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center">
+                <p class="text-sm">&copy; 2024 Equipment Management System. All rights reserved.</p>
+                <p class="text-xs text-gray-400 mt-2">Professional equipment tracking and rental management</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="api-simulation.js"></script>
+    <script src="main.js"></script>
+    <script>
+        // Warehouse-specific functionality
+        class WarehouseManager {
+            constructor() {
+                this.selectedLocation = null;
+                this.selectedEquipment = null;
+                this.assignmentMode = false;
+                this.currentZoom = 1;
+                this.init();
+            }
+
+            async init() {
+                // 1. Load Warehouses from SQL
+                const warehouses = await window.sqlAPI.getWarehouses();
+
+                if (warehouses && warehouses.length > 0) {
+                    this.populateWarehouseDropdown(warehouses);
+                    // Load the first warehouse by default
+                    this.currentWarehouse = warehouses[0];
+                    this.loadWarehouseData(this.currentWarehouse.id);
+                } else {
+                    alert("No warehouses found in SQL database. Please create one.");
+                }
+
+                this.setupEventListeners();
+                this.loadEquipmentList(); // Load unassigned equipment for the sidebar
+            }
+
+            populateWarehouseDropdown(warehouses) {
+                const selector = document.getElementById('warehouse-selector');
+                selector.innerHTML = '';
+                warehouses.forEach(w => {
+                    const option = document.createElement('option');
+                    option.value = w.id;
+                    option.textContent = w.name;
+                    selector.appendChild(option);
+                });
+
+                // Add event listener for changing warehouse
+                selector.addEventListener('change', (e) => {
+                    const selectedId = parseInt(e.target.value);
+                    const selectedWarehouse = warehouses.find(w => w.id === selectedId);
+                    this.currentWarehouse = selectedWarehouse;
+                    this.loadWarehouseData(selectedId);
+                });
+            }
+
+            async loadWarehouseData(warehouseId) {
+                // 1. Get configuration
+                if (!this.currentWarehouse) return;
+
+                // 2. Get Tools in this warehouse (Occupancy)
+                const tools = await window.sqlAPI.getWarehouseTools(warehouseId);
+
+                // 3. Generate Grid
+                this.generateWarehouseGrid(this.currentWarehouse.grid_columns, this.currentWarehouse.grid_rows, tools);
+                this.updateStatistics(this.currentWarehouse.grid_columns * this.currentWarehouse.grid_rows, tools.length);
+            }
+
+            generateWarehouseGrid(cols, rows, tools) {
+                const grid = document.getElementById('warehouse-grid');
+                grid.innerHTML = '';
+
+                // Create CSS grid layout dynamically
+                grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+
+                // Create Map of occupied locations for O(1) lookup
+                // Format: "A-1": { tool info }
+                const occupancyMap = {};
+                tools.forEach(t => {
+                    if (t.location) occupancyMap[t.location] = t;
+                });
+
+                // Generate Header Row (A, B, C...)
+                for (let c = 0; c < cols; c++) {
+                    const header = document.createElement('div');
+                    header.className = 'grid-cell-header';
+                    header.textContent = String.fromCharCode(65 + c); // A, B, C
+                    header.style.textAlign = 'center';
+                    header.style.fontWeight = 'bold';
+                    grid.appendChild(header);
+                }
+
+                // Generate Cells
+                for (let r = 1; r <= rows; r++) {
+                    // Row Number (We might need a separate sidebar for this in CSS grid, but simpler for now)
+                    // Note: In a pure grid, row headers are tricky without changing structure. 
+                    // For now, let's assume standard grid generation:
+
+                    for (let c = 0; c < cols; c++) {
+                        const colLetter = String.fromCharCode(65 + c);
+                        const cellId = `${colLetter}-${r}`;
+
+                        const cell = document.createElement('div');
+                        cell.id = `cell-${cellId}`;
+                        cell.textContent = cellId;
+                        cell.dataset.locationId = cellId;
+
+                        // Check Status
+                        if (occupancyMap[cellId]) {
+                            cell.className = 'grid-cell occupied';
+                            cell.title = `${occupancyMap[cellId].name} (${occupancyMap[cellId].serial})`;
+                        } else {
+                            cell.className = 'grid-cell available';
+                        }
+
+                        cell.addEventListener('click', () => this.selectLocation(cellId));
+                        grid.appendChild(cell);
+                    }
+                }
+            }
+
+            markOccupiedCells() {
+                const occupiedLocations = [
+                    'A-1', 'A-2', 'B-3', 'C-4', 'D-5',
+                    'A-10', 'B-15', 'C-20', 'D-25'
+                ];
+
+                occupiedLocations.forEach(location => {
+                    const cell = document.getElementById(`cell-${location}`);
+                    if (cell) {
+                        cell.className = 'grid-cell occupied';
+                    }
+                });
+            }
+
+            selectLocation(locationId) {
+                // Remove previous selection
+                if (this.selectedLocation) {
+                    const prevCell = document.getElementById(`cell-${this.selectedLocation}`);
+                    if (prevCell) {
+                        prevCell.classList.remove('selected');
+                    }
+                }
+
+                // Select new location
+                this.selectedLocation = locationId;
+                const cell = document.getElementById(`cell-${locationId}`);
+                if (cell) {
+                    cell.classList.add('selected');
+                }
+
+                // Update location details
+                this.updateLocationDetails(locationId);
+
+                // If in assignment mode, assign equipment
+                if (this.assignmentMode && this.selectedEquipment) {
+                    this.assignEquipmentToLocation(this.selectedEquipment, locationId);
+                }
+            }
+
+            updateLocationDetails(locationId) {
+                const detailsContainer = document.getElementById('location-details');
+                
+                // Mock location data
+                const locationData = {
+                    id: locationId,
+                    shelfNumber: `Shelf-${locationId}`,
+                    zone: `Zone ${locationId.charAt(0)}`,
+                    status: this.getLocationStatus(locationId),
+                    equipment: this.getEquipmentAtLocation(locationId)
+                };
+
+                detailsContainer.innerHTML = `
+                    <div class="location-info">
+                        <h4 class="font-semibold text-gray-900 mb-2">Location ${locationId}</h4>
+                        <div class="space-y-2 text-sm">
+                            <div><strong>Shelf:</strong> ${locationData.shelfNumber}</div>
+                            <div><strong>Zone:</strong> ${locationData.zone}</div>
+                            <div><strong>Status:</strong> 
+                                <span class="status-${locationData.status.toLowerCase()}">${locationData.status}</span>
+                            </div>
+                            ${locationData.equipment ? `
+                                <div><strong>Equipment:</strong> ${locationData.equipment}</div>
+                            ` : ''}
+                        </div>
+                        
+                        <div class="mt-4 flex space-x-2">
+                            <button onclick="warehouseManager.editLocation('${locationId}')" 
+                                    class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+                                Edit
+                            </button>
+                            <button onclick="warehouseManager.reserveLocation('${locationId}')" 
+                                    class="px-3 py-1 bg-yellow-600 text-white rounded text-sm hover:bg-yellow-700">
+                                Reserve
+                            </button>
+                            ${locationData.equipment ? `
+                                <button onclick="warehouseManager.removeEquipment('${locationId}')" 
+                                        class="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700">
+                                    Remove
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+
+            getLocationStatus(locationId) {
+                const cell = document.getElementById(`cell-${locationId}`);
+                if (cell.classList.contains('occupied')) return 'Occupied';
+                if (cell.classList.contains('reserved')) return 'Reserved';
+                return 'Available';
+            }
+
+            getEquipmentAtLocation(locationId) {
+                // Mock equipment data
+                const equipmentMap = {
+                    'A-1': 'Digital Caliper Set (DC-001)',
+                    'A-2': 'Oscilloscope (OSC-002)',
+                    'B-3': 'Cordless Drill (CD-003)',
+                    'C-4': 'Safety Harness (SH-004)',
+                    'D-5': 'Multimeter (MM-005)'
+                };
+                return equipmentMap[locationId] || null;
+            }
+
+            loadEquipmentList() {
+                const equipmentList = [
+                    { id: 1, name: 'Digital Caliper Set', serial: 'DC-001', status: 'Available' },
+                    { id: 2, name: 'Oscilloscope', serial: 'OSC-002', status: 'Available' },
+                    { id: 3, name: 'Cordless Drill', serial: 'CD-003', status: 'Rented' },
+                    { id: 4, name: 'Safety Harness', serial: 'SH-004', status: 'Available' },
+                    { id: 5, name: 'Multimeter', serial: 'MM-005', status: 'Maintenance' },
+                    { id: 6, name: 'Torque Wrench', serial: 'TW-006', status: 'Available' },
+                    { id: 7, name: 'Welding Helmet', serial: 'WH-007', status: 'Available' },
+                    { id: 8, name: 'Hydraulic Jack', serial: 'HJ-008', status: 'Available' }
+                ];
+
+                const container = document.getElementById('equipment-list');
+                container.innerHTML = '';
+
+                equipmentList.forEach(equipment => {
+                    if (equipment.status === 'Available') {
+                        const item = document.createElement('div');
+                        item.className = 'equipment-item';
+                        item.dataset.equipmentId = equipment.id;
+                        item.innerHTML = `
+                            <div class="font-medium">${equipment.name}</div>
+                            <div class="text-sm text-gray-500">${equipment.serial}</div>
+                        `;
+                        
+                        item.addEventListener('click', () => this.selectEquipment(equipment.id));
+                        container.appendChild(item);
+                    }
+                });
+            }
+
+            selectEquipment(equipmentId) {
+                // Remove previous selection
+                document.querySelectorAll('.equipment-item').forEach(item => {
+                    item.classList.remove('selected');
+                });
+
+                // Select new equipment
+                const equipmentItem = document.querySelector(`[data-equipment-id="${equipmentId}"]`);
+                if (equipmentItem) {
+                    equipmentItem.classList.add('selected');
+                    this.selectedEquipment = equipmentId;
+                }
+            }
+
+            toggleAssignmentMode() {
+                this.assignmentMode = !this.assignmentMode;
+                const modeIndicator = document.getElementById('assignment-mode');
+                const toggleBtn = document.getElementById('assignment-toggle');
+                
+                if (this.assignmentMode) {
+                    modeIndicator.style.display = 'block';
+                    toggleBtn.textContent = 'Exit Assignment Mode';
+                    toggleBtn.className = 'px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors';
+                } else {
+                    modeIndicator.style.display = 'none';
+                    toggleBtn.textContent = 'Assign Equipment';
+                    toggleBtn.className = 'px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors';
+                }
+            }
+
+            cancelAssignmentMode() {
+                this.assignmentMode = false;
+                this.toggleAssignmentMode();
+            }
+
+            async assignEquipmentToLocation(equipmentId, locationId) {
+                // 1. Call API
+                const success = await window.sqlAPI.assignToolToLocation(equipmentId, this.currentWarehouse.id, locationId);
+
+                if (success) {
+                    // 2. Update UI (Visual only)
+                    const cell = document.getElementById(`cell-${locationId}`);
+                    cell.className = 'grid-cell occupied';
+
+                    equipmentManager.showNotification(`Equipment assigned to location ${locationId}`, 'success');
+                    this.cancelAssignmentMode();
+
+                    // 3. Reload data to ensure sync
+                    this.loadWarehouseData(this.currentWarehouse.id);
+                    this.loadEquipmentList();
+                }
+            }
+            //assignEquipmentToLocation(equipmentId, locationId) {
+            //    // Update cell appearance
+            //    const cell = document.getElementById(`cell-${locationId}`);
+            //    cell.className = 'grid-cell occupied';
+                
+            //    // Show success message
+            //    equipmentManager.showNotification(`Equipment assigned to location ${locationId}`, 'success');
+                
+            //    // Exit assignment mode
+            //    this.cancelAssignmentMode();
+                
+            //    // Update statistics
+            //    this.updateStatistics();
+                
+            //    // Update location details
+            //    this.updateLocationDetails(locationId);
+            //}
+
+            updateStatistics() {
+                const totalCells = 26 * 50;
+                const occupiedCells = document.querySelectorAll('.grid-cell.occupied').length;
+                const reservedCells = document.querySelectorAll('.grid-cell.reserved').length;
+                const availableCells = totalCells - occupiedCells - reservedCells;
+
+                document.getElementById('total-locations').textContent = totalCells;
+                document.getElementById('occupied-locations').textContent = occupiedCells;
+                document.getElementById('available-locations').textContent = availableCells;
+                document.getElementById('reserved-locations').textContent = reservedCells;
+            }
+
+            setupEventListeners() {
+                // Zone filter
+                document.getElementById('zone-filter').addEventListener('change', (e) => {
+                    this.filterByZone(e.target.value);
+                });
+
+                // Equipment search
+                document.getElementById('equipment-search').addEventListener('input', (e) => {
+                    this.filterEquipment(e.target.value);
+                });
+            }
+
+            filterByZone(zone) {
+                const cells = document.querySelectorAll('.grid-cell');
+                cells.forEach(cell => {
+                    if (zone === '' || cell.dataset.locationId.startsWith(zone)) {
+                        cell.style.display = 'flex';
+                    } else {
+                        cell.style.display = 'none';
+                    }
+                });
+            }
+
+            filterEquipment(searchTerm) {
+                const items = document.querySelectorAll('.equipment-item');
+                items.forEach(item => {
+                    const text = item.textContent.toLowerCase();
+                    if (text.includes(searchTerm.toLowerCase())) {
+                        item.style.display = 'block';
+                    } else {
+                        item.style.display = 'none';
+                    }
+                });
+            }
+
+            editLocation(locationId) {
+                equipmentManager.showNotification(`Edit location ${locationId} - Feature coming soon`, 'info');
+            }
+
+            reserveLocation(locationId) {
+                const cell = document.getElementById(`cell-${locationId}`);
+                cell.className = 'grid-cell reserved';
+                this.updateStatistics();
+                equipmentManager.showNotification(`Location ${locationId} reserved`, 'success');
+            }
+
+            removeEquipment(locationId) {
+                const cell = document.getElementById(`cell-${locationId}`);
+                cell.className = 'grid-cell available';
+                this.updateStatistics();
+                this.updateLocationDetails(locationId);
+                equipmentManager.showNotification(`Equipment removed from location ${locationId}`, 'success');
+            }
+
+            showLocationHistory() {
+                equipmentManager.showNotification('Location history feature coming soon', 'info');
+            }
+        }
+
+        // Zoom functions
+        function zoomIn() {
+            warehouseManager.currentZoom = Math.min(warehouseManager.currentZoom + 0.2, 2);
+            applyZoom();
+        }
+
+        function zoomOut() {
+            warehouseManager.currentZoom = Math.max(warehouseManager.currentZoom - 0.2, 0.5);
+            applyZoom();
+        }
+
+        function resetZoom() {
+            warehouseManager.currentZoom = 1;
+            applyZoom();
+        }
+
+        function applyZoom() {
+            const grid = document.getElementById('warehouse-grid');
+            grid.style.transform = `scale(${warehouseManager.currentZoom})`;
+            grid.style.transformOrigin = 'top left';
+        }
+
+        // Initialize warehouse manager
+        const warehouseManager = new WarehouseManager();
+    </script>
+</body>
+</html>
