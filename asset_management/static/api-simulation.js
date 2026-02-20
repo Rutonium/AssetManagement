@@ -35,6 +35,30 @@ class SQLServerAPI {
         }
     }
 
+    async getRental(id) {
+        try {
+            return await this._getJson(`${this.baseUrl}/rentals/${id}`);
+        } catch (error) {
+            console.error('Error fetching rental:', error);
+            return null;
+        }
+    }
+
+    async getRentalAvailability(toolID, startDate, endDate, quantity) {
+        try {
+            const params = new URLSearchParams({
+                toolID: String(toolID),
+                startDate: String(startDate),
+                endDate: String(endDate),
+                quantity: String(quantity || 1)
+            });
+            return await this._getJson(`${this.baseUrl}/rentals/availability/by-tool?${params.toString()}`);
+        } catch (error) {
+            console.error('Error checking rental availability:', error);
+            return null;
+        }
+    }
+
     async createRental(rentalData) {
         try {
             const response = await fetch(`${this.baseUrl}/rentals`, {
@@ -49,16 +73,122 @@ class SQLServerAPI {
         }
     }
 
+    async createRentalDetailed(rentalData) {
+        try {
+            return await this._getJson(`${this.baseUrl}/rentals`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(rentalData)
+            });
+        } catch (error) {
+            console.error('Error creating rental (detailed):', error);
+            return null;
+        }
+    }
+
+    async getOfferByNumber(offerNumber) {
+        try {
+            return await this._getJson(`${this.baseUrl}/offers/${encodeURIComponent(offerNumber)}`);
+        } catch (error) {
+            console.error('Error fetching offer:', error);
+            return null;
+        }
+    }
+
+    async checkoutOffer(offerNumber, checkoutData) {
+        try {
+            return await this._getJson(`${this.baseUrl}/offers/${encodeURIComponent(offerNumber)}/checkout`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(checkoutData)
+            });
+        } catch (error) {
+            console.error('Error checking out offer:', error);
+            return null;
+        }
+    }
+
+    async kioskLend(payload) {
+        try {
+            return await this._getJson(`${this.baseUrl}/kiosk/lend`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } catch (error) {
+            console.error('Error creating kiosk lend:', error);
+            return null;
+        }
+    }
+
     async updateRentalStatus(id, action) {
         try {
-            const response = await fetch(`${this.baseUrl}/rentals/${id}/${action}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
+            let response;
+            if (action === 'approve') {
+                response = await fetch(`${this.baseUrl}/rentals/${id}/decide`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ decision: 'approve', operatorUserID: 1 })
+                });
+            } else if (action === 'cancel') {
+                response = await fetch(`${this.baseUrl}/rentals/${id}/decide`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ decision: 'reject', reason: 'Rejected by warehouse', operatorUserID: 1 })
+                });
+            } else {
+                response = await fetch(`${this.baseUrl}/rentals/${id}/${action}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+            if (!response.ok) {
+                const detail = await response.text().catch(() => '');
+                console.error(`Action ${action} failed:`, response.status, detail);
+            }
             return response.ok;
         } catch (error) {
             console.error(`Error performing ${action}:`, error);
             return false;
+        }
+    }
+
+    async decideReservation(id, payload) {
+        try {
+            return await this._getJson(`${this.baseUrl}/rentals/${id}/decide`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {})
+            });
+        } catch (error) {
+            console.error('Error deciding reservation:', error);
+            return null;
+        }
+    }
+
+    async markItemsForRental(id, payload) {
+        try {
+            return await this._getJson(`${this.baseUrl}/rentals/${id}/mark-items-for-rental`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {})
+            });
+        } catch (error) {
+            console.error('Error marking items for rental:', error);
+            return null;
+        }
+    }
+
+    async receiveMarkedItems(id, payload) {
+        try {
+            return await this._getJson(`${this.baseUrl}/rentals/${id}/receive-marked-items`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {})
+            });
+        } catch (error) {
+            console.error('Error receiving marked items:', error);
+            return null;
         }
     }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import json
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -8,16 +9,44 @@ from sqlalchemy.orm import Session
 from models.asset_models import Rental, RentalItem, Tool, ToolInstance
 
 
-def generate_rental_number(db: Session) -> str:
-    last = db.execute(select(Rental).order_by(Rental.RentalID.desc())).scalars().first()
+def generate_rental_number(db: Session, prefix: str = "RNT") -> str:
+    token = (prefix or "RNT").upper()
+    last = db.execute(
+        select(Rental)
+        .where(Rental.RentalNumber.like(f"{token}-%"))
+        .order_by(Rental.RentalID.desc())
+    ).scalars().first()
     next_number = 1
     if last and last.RentalNumber:
-        raw = last.RentalNumber.replace("RNT-", "")
+        raw = last.RentalNumber.replace(f"{token}-", "")
         try:
             next_number = int(raw) + 1
         except ValueError:
             next_number = 1
-    return f"RNT-{next_number:03d}"
+    return f"{token}-{next_number:03d}"
+
+
+def generate_offer_number(db: Session, created_on: date | None = None) -> str:
+    current_date = created_on or date.today()
+    yy = f"{current_date.year % 100:02d}"
+
+    rows = db.execute(
+        select(Rental.RentalNumber).where(Rental.RentalNumber.like(f"{yy}%"))
+    ).all()
+
+    max_suffix = 0
+    for row in rows:
+        number = (row[0] or "").strip()
+        if len(number) != 6 or not number.isdigit():
+            continue
+        if not number.startswith(yy):
+            continue
+        suffix = int(number[2:])
+        if suffix > max_suffix:
+            max_suffix = suffix
+
+    next_suffix = max_suffix + 1
+    return f"{yy}{next_suffix:04d}"
 
 
 def recalc_total_cost(rental: Rental) -> None:
@@ -32,11 +61,57 @@ def recalc_total_cost(rental: Rental) -> None:
     total = 0
     for item in rental.RentalItems:
         daily = float(item.DailyCost or 0)
-        total += daily * rental_days * item.Quantity
+        quantity = int(item.Quantity or 0)
+        line_total = daily * rental_days * quantity
+        item.TotalCost = line_total
+        total += line_total
     rental.TotalCost = total
 
 
 def serialize_rental(rental: Rental) -> dict:
+    rental_items = []
+    deficit_quantity = 0
+    invoiceable_quantity = 0
+    for item in rental.RentalItems:
+        notes = item.CheckoutNotes or ""
+        is_deficit = item.ToolInstanceID is None and "DEFICIT" in notes.upper()
+        lifecycle = _parse_lifecycle(item.ReturnNotes)
+        if is_deficit:
+            deficit_quantity += int(item.Quantity or 0)
+        state = str(lifecycle.get("state") or "")
+        is_invoiceable = state == "Picked Up"
+        if is_invoiceable:
+            invoiceable_quantity += int(item.Quantity or 0)
+        rental_items.append(
+            {
+                "rentalItemID": item.RentalItemID,
+                "rentalID": item.RentalID,
+                "toolID": item.ToolID,
+                "toolInstanceID": item.ToolInstanceID,
+                "quantity": item.Quantity,
+                "dailyCost": item.DailyCost,
+                "totalCost": item.TotalCost,
+                "checkoutNotes": item.CheckoutNotes,
+                "returnNotes": item.ReturnNotes,
+                "isAllocated": item.ToolInstanceID is not None,
+                "isDeficit": is_deficit,
+                "isInvoiceable": is_invoiceable,
+                "lifecycle": lifecycle,
+                "tool": {
+                    "toolID": item.Tool.ToolID,
+                    "toolName": item.Tool.ToolName,
+                    "serialNumber": item.Tool.SerialNumber,
+                } if item.Tool else None,
+                "instance": {
+                    "toolInstanceID": item.ToolInstance.ToolInstanceID,
+                    "serialNumber": item.ToolInstance.SerialNumber,
+                    "status": item.ToolInstance.Status,
+                    "lastCalibration": item.ToolInstance.LastCalibration,
+                    "nextCalibration": item.ToolInstance.NextCalibration,
+                } if item.ToolInstance else None,
+            }
+        )
+
     return {
         "rentalID": rental.RentalID,
         "rentalNumber": rental.RentalNumber,
@@ -56,33 +131,24 @@ def serialize_rental(rental: Rental) -> dict:
         "notes": rental.Notes,
         "createdDate": rental.CreatedDate,
         "updatedDate": rental.UpdatedDate,
-        "rentalItems": [
-            {
-                "rentalItemID": item.RentalItemID,
-                "rentalID": item.RentalID,
-                "toolID": item.ToolID,
-                "toolInstanceID": item.ToolInstanceID,
-                "quantity": item.Quantity,
-                "dailyCost": item.DailyCost,
-                "totalCost": item.TotalCost,
-                "checkoutNotes": item.CheckoutNotes,
-                "returnNotes": item.ReturnNotes,
-                "tool": {
-                    "toolID": item.Tool.ToolID,
-                    "toolName": item.Tool.ToolName,
-                    "serialNumber": item.Tool.SerialNumber,
-                } if item.Tool else None,
-                "instance": {
-                    "toolInstanceID": item.ToolInstance.ToolInstanceID,
-                    "serialNumber": item.ToolInstance.SerialNumber,
-                    "status": item.ToolInstance.Status,
-                    "lastCalibration": item.ToolInstance.LastCalibration,
-                    "nextCalibration": item.ToolInstance.NextCalibration,
-                } if item.ToolInstance else None,
-            }
-            for item in rental.RentalItems
-        ],
+        "hasDeficit": deficit_quantity > 0,
+        "deficitQuantity": deficit_quantity,
+        "invoiceableQuantity": invoiceable_quantity,
+        "rentalItems": rental_items,
     }
+
+
+def _parse_lifecycle(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    value = raw.strip()
+    if not value.startswith("{"):
+        return {}
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
+    except (ValueError, json.JSONDecodeError):
+        return {}
 
 
 def apply_return_updates(db: Session, rental: Rental, return_condition: str, return_notes: str | None) -> None:

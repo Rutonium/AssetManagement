@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Operations - Incoming/Outgoing</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --font-primary: 'Inter', sans-serif; }
+        body { font-family: var(--font-primary); background: linear-gradient(135deg, #FAFAFA 0%, #F7FAFC 100%); min-height: 100vh; }
+        .order-card { transition: all 0.2s ease; }
+        .order-card:hover { transform: translateY(-1px); box-shadow: 0 8px 16px rgba(0,0,0,.08); }
+        .checklist-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.6);
+            display: none;
+            z-index: 1000;
+        }
+        .checklist-modal.active { display: block; }
+        .checklist-panel {
+            width: 100%;
+            height: 100%;
+            background: #f8fafc;
+            overflow: auto;
+        }
+        .line-row input[type="number"],
+        .line-row input[type="text"],
+        .line-row select,
+        .line-row textarea {
+            width: 100%;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            padding: 0.45rem 0.55rem;
+            font-size: 0.85rem;
+        }
+        .scanner-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            display: none;
+            z-index: 1200;
+            align-items: center;
+            justify-content: center;
+        }
+        .scanner-modal.active { display: flex; }
+        .scanner-video {
+            width: min(92vw, 560px);
+            max-height: 70vh;
+            background: #111827;
+            border-radius: 12px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="bg-white shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0"><h1 class="text-xl font-bold text-gray-800">Equipment Manager</h1></div>
+                    <div class="hidden md:block">
+                        <div class="ml-10 flex items-baseline space-x-4">
+                            <a href="index.html" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Dashboard</a>
+                            <a href="warehouse.html" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Warehouse</a>
+                            <a href="catalog.html" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Equipment Catalog</a>
+                            <a href="rentals.html" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Rentals</a>
+                            <a href="operations.html" class="text-gray-900 font-medium px-3 py-2 rounded-md text-sm">Operations</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center">
+                    <button class="bg-gray-800 text-white px-3 py-1 rounded text-sm hover:bg-gray-700">Logout</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="mb-6">
+            <h2 class="text-2xl font-bold text-gray-900">Incoming / Outgoing</h2>
+            <p class="text-sm text-gray-600">Left: returns due in. Right: pickups/dispatch out.</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <section class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-lg font-semibold text-gray-900">Incoming Orders (Returns)</h3>
+                    <span id="incoming-count" class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">0</span>
+                </div>
+                <div id="incoming-list" class="space-y-3"></div>
+            </section>
+
+            <section class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-lg font-semibold text-gray-900">Outgoing Orders (Pickups)</h3>
+                    <span id="outgoing-count" class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">0</span>
+                </div>
+                <div id="outgoing-list" class="space-y-3"></div>
+            </section>
+        </div>
+    </div>
+
+    <div id="checklist-modal" class="checklist-modal">
+        <div class="checklist-panel">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 space-y-4">
+                <div class="flex items-center justify-between bg-white rounded-lg shadow p-4 sticky top-4 z-10">
+                    <div>
+                        <h3 id="checklist-title" class="text-xl font-bold text-gray-900">Checklist</h3>
+                        <p id="checklist-subtitle" class="text-sm text-gray-600"></p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="inline-flex items-center gap-2 px-3 py-2 border rounded cursor-pointer text-sm bg-white hover:bg-gray-50">
+                            <span>Camera</span>
+                            <input id="checklist-photo-input" type="file" accept="image/*" capture="environment" class="hidden">
+                        </label>
+                        <button id="close-checklist" type="button" class="px-3 py-2 border rounded text-sm bg-white hover:bg-gray-50">Close</button>
+                    </div>
+                </div>
+
+                <div id="checklist-photo-preview" class="hidden bg-white rounded-lg shadow p-4">
+                    <div class="text-sm font-medium text-gray-700 mb-2">Captured Photo (local preview)</div>
+                    <img id="checklist-photo-img" class="max-h-56 rounded border" alt="Checklist capture">
+                </div>
+
+                <div id="checklist-lines" class="space-y-3"></div>
+
+                <div class="bg-white rounded-lg shadow p-4">
+                    <div class="flex items-center justify-end gap-2">
+                        <button id="submit-checklist" type="button" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Submit</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="scanner-modal" class="scanner-modal">
+        <div class="bg-white rounded-lg shadow-xl p-4 space-y-3 w-[min(94vw,640px)]">
+            <div class="flex items-center justify-between">
+                <h4 class="font-semibold text-gray-900">Scan Tool Barcode</h4>
+                <button id="scanner-cancel" type="button" class="px-3 py-1 border rounded text-sm">Close</button>
+            </div>
+            <video id="scanner-video" class="scanner-video" autoplay playsinline muted></video>
+            <div id="scanner-status" class="text-sm text-gray-600">Initializing camera...</div>
+            <div class="flex justify-end">
+                <button id="scanner-use-photo" type="button" class="px-3 py-1 border rounded text-sm bg-white hover:bg-gray-50">Use Photo</button>
+            </div>
+        </div>
+    </div>
+    <input id="scanner-fallback-input" type="file" accept="image/*" capture="environment" class="hidden">
+
+    <script src="app-config.js"></script>
+    <script src="api-simulation.js"></script>
+    <script src="main.js"></script>
+    <script>
+        class OperationsBoard {
+            constructor() {
+                this.rentals = [];
+                this.currentChecklist = null;
+                this.photoDataUrl = null;
+                this.pendingScanRow = null;
+                this.scannerStream = null;
+                this.scannerTimer = null;
+                this.scannerTimeout = null;
+            }
+
+            async init() {
+                while (!window.sqlAPI) await new Promise(r => setTimeout(r, 100));
+                this.bindGlobalEvents();
+                await this.load();
+            }
+
+            bindGlobalEvents() {
+                const closeBtn = document.getElementById('close-checklist');
+                if (closeBtn) closeBtn.addEventListener('click', () => this.closeChecklist());
+
+                const submitBtn = document.getElementById('submit-checklist');
+                if (submitBtn) submitBtn.addEventListener('click', () => this.submitChecklist());
+                const scannerCancelBtn = document.getElementById('scanner-cancel');
+                if (scannerCancelBtn) scannerCancelBtn.addEventListener('click', () => this.stopSerialScan('Scan cancelled.'));
+                const scannerPhotoBtn = document.getElementById('scanner-use-photo');
+                if (scannerPhotoBtn) scannerPhotoBtn.addEventListener('click', () => this.openFallbackCapture());
+                const scannerFallbackInput = document.getElementById('scanner-fallback-input');
+                if (scannerFallbackInput) {
+                    scannerFallbackInput.addEventListener('change', async (event) => {
+                        const file = event.target.files && event.target.files[0];
+                        if (!file) return;
+                        await this.handleCapturedScanImage(file);
+                        scannerFallbackInput.value = '';
+                    });
+                }
+
+                const fileInput = document.getElementById('checklist-photo-input');
+                if (fileInput) {
+                    fileInput.addEventListener('change', async (e) => {
+                        const file = e.target.files && e.target.files[0];
+                        if (!file) return;
+                        this.photoDataUrl = await this.fileToDataUrl(file);
+                        const previewWrap = document.getElementById('checklist-photo-preview');
+                        const img = document.getElementById('checklist-photo-img');
+                        if (img) img.src = this.photoDataUrl;
+                        if (previewWrap) previewWrap.classList.remove('hidden');
+                    });
+                }
+
+                const linesRoot = document.getElementById('checklist-lines');
+                if (linesRoot) {
+                    linesRoot.addEventListener('click', (event) => {
+                        const button = event.target.closest('.scan-serial-btn');
+                        if (!button) return;
+                        const row = button.closest('.line-row');
+                        if (!row) return;
+                        this.startSerialScanForRow(row);
+                    });
+                    linesRoot.addEventListener('input', (event) => {
+                        const row = event.target.closest('.line-row');
+                        if (!row) return;
+
+                        if (event.target.classList.contains('line-serial')) {
+                            this.validateRowSerial(row);
+                            return;
+                        }
+
+                        if (event.target.classList.contains('picked-qty')) {
+                            const maxQty = Number(row.dataset.max || 0);
+                            const pickedInput = row.querySelector('.picked-qty');
+                            const remainingEl = row.querySelector('.row-remaining');
+                            const picked = Math.max(0, Math.min(maxQty, Number(pickedInput?.value || 0)));
+                            if (pickedInput) pickedInput.value = String(picked);
+                            if (remainingEl) remainingEl.textContent = String(Math.max(0, maxQty - picked));
+                        }
+                    });
+                }
+            }
+
+            getRemainingItems(rental) {
+                return (rental.rentalItems || []).reduce((sum, line) => {
+                    const lifecycleState = line?.lifecycle?.state || '';
+                    if (['Returned', 'Not Returned', 'Excluded from Order', 'Superseded'].includes(lifecycleState)) return sum;
+                    return sum + Number(line.quantity || 0);
+                }, 0);
+            }
+
+            hasPendingPickup(rental) {
+                return (rental.rentalItems || []).some(line => {
+                    const s = line?.lifecycle?.state || '';
+                    return ['Pending Pickup', 'Reserved', 'Shortage Action Set'].includes(s) && Number(line.quantity || 0) > 0;
+                });
+            }
+
+            hasReceivableLines(rental) {
+                return (rental.rentalItems || []).some(line => {
+                    const s = line?.lifecycle?.state || '';
+                    return !['Returned', 'Not Returned', 'Excluded from Order', 'Superseded', 'Fulfilled'].includes(s) && Number(line.quantity || 0) > 0;
+                });
+            }
+
+            async load() {
+                this.rentals = await window.sqlAPI.getRentals() || [];
+
+                const incoming = [];
+                const outgoing = [];
+
+                this.rentals.forEach((r) => {
+                    const status = String(r.status || '');
+                    const remaining = this.getRemainingItems(r);
+                    if (['Active', 'Overdue'].includes(status) && this.hasReceivableLines(r)) {
+                        incoming.push({
+                            id: r.rentalID,
+                            rentalNumber: r.rentalNumber,
+                            remaining,
+                            date: r.endDate,
+                            project: r.projectCode || '-',
+                            status
+                        });
+                    }
+                    if (status === 'Reserved' || this.hasPendingPickup(r)) {
+                        outgoing.push({
+                            id: r.rentalID,
+                            rentalNumber: r.rentalNumber,
+                            remaining,
+                            date: r.startDate,
+                            project: r.projectCode || '-',
+                            status
+                        });
+                    }
+                });
+
+                incoming.sort((a,b) => new Date(a.date) - new Date(b.date));
+                outgoing.sort((a,b) => new Date(a.date) - new Date(b.date));
+                this.render('incoming-list', incoming, 'incoming');
+                this.render('outgoing-list', outgoing, 'outgoing');
+                document.getElementById('incoming-count').textContent = incoming.length;
+                document.getElementById('outgoing-count').textContent = outgoing.length;
+            }
+
+            render(containerId, rows, type) {
+                const root = document.getElementById(containerId);
+                if (!root) return;
+                if (!rows.length) {
+                    root.innerHTML = '<div class="text-sm text-gray-500">No orders.</div>';
+                    return;
+                }
+                root.innerHTML = rows.map((r) => `
+                    <div class="order-card border rounded p-3 bg-gray-50">
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <div class="font-semibold text-gray-900">${r.rentalNumber}</div>
+                                <div class="text-xs text-gray-600">Project: ${r.project}</div>
+                            </div>
+                            <div class="text-right text-xs text-gray-700">
+                                <div>Remaining items: <strong>${r.remaining}</strong></div>
+                                <div>${type === 'incoming' ? 'Return' : 'Pickup'} date: ${new Date(r.date).toLocaleDateString()}</div>
+                            </div>
+                        </div>
+                        <div class="mt-3 flex justify-end">
+                            <button type="button" data-checklist-type="${type}" data-rental-id="${r.id}" class="open-checklist px-3 py-1 border rounded text-xs hover:bg-white">Open Checklist</button>
+                        </div>
+                    </div>
+                `).join('');
+
+                root.querySelectorAll('.open-checklist').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const rentalId = Number(btn.dataset.rentalId);
+                        const checklistType = btn.dataset.checklistType;
+                        this.openChecklist(rentalId, checklistType);
+                    });
+                });
+            }
+
+            openChecklist(rentalId, type) {
+                const rental = this.rentals.find(r => Number(r.rentalID) === Number(rentalId));
+                if (!rental) return;
+
+                this.currentChecklist = { rentalId, type, rental };
+                this.photoDataUrl = null;
+                const previewWrap = document.getElementById('checklist-photo-preview');
+                const fileInput = document.getElementById('checklist-photo-input');
+                if (previewWrap) previewWrap.classList.add('hidden');
+                if (fileInput) fileInput.value = '';
+
+                const title = document.getElementById('checklist-title');
+                const subtitle = document.getElementById('checklist-subtitle');
+                if (title) title.textContent = type === 'incoming' ? 'Receive Items Checklist' : 'Pickup Items Checklist';
+                if (subtitle) {
+                    subtitle.textContent = `${rental.rentalNumber} • ${new Date(rental.startDate).toLocaleDateString()} - ${new Date(rental.endDate).toLocaleDateString()} • Project ${rental.projectCode || '-'}`;
+                }
+
+                this.renderChecklistLines(rental, type);
+                const modal = document.getElementById('checklist-modal');
+                if (modal) modal.classList.add('active');
+            }
+
+            closeChecklist() {
+                this.stopSerialScan();
+                const modal = document.getElementById('checklist-modal');
+                if (modal) modal.classList.remove('active');
+                this.currentChecklist = null;
+            }
+
+            getChecklistLines(rental, type) {
+                const lines = rental.rentalItems || [];
+                if (type === 'outgoing') {
+                    return lines.filter((line) => {
+                        const s = line?.lifecycle?.state || '';
+                        return ['Pending Pickup', 'Reserved', 'Shortage Action Set'].includes(s) && Number(line.quantity || 0) > 0;
+                    });
+                }
+
+                return lines.filter((line) => {
+                    const s = line?.lifecycle?.state || '';
+                    return !['Returned', 'Not Returned', 'Excluded from Order', 'Superseded', 'Fulfilled'].includes(s) && Number(line.quantity || 0) > 0;
+                });
+            }
+
+            renderChecklistLines(rental, type) {
+                const root = document.getElementById('checklist-lines');
+                if (!root) return;
+
+                const lines = this.getChecklistLines(rental, type);
+                if (!lines.length) {
+                    root.innerHTML = '<div class="bg-white rounded-lg shadow p-4 text-sm text-gray-600">No actionable lines for this order.</div>';
+                    return;
+                }
+
+                root.innerHTML = lines.map((line) => {
+                    const maxQty = Number(line.quantity || 0);
+                    const toolName = line.tool?.toolName || `Tool ${line.toolID}`;
+                    const state = line?.lifecycle?.state || '-';
+
+                    if (type === 'incoming') {
+                        return `
+                            <div class="line-row bg-white rounded-lg shadow p-4" data-line-id="${line.rentalItemID}" data-max="${maxQty}">
+                                <div class="flex justify-between items-center mb-3">
+                                    <div>
+                                        <div class="font-semibold text-gray-900">${toolName}</div>
+                                        <div class="text-xs text-gray-600">Line #${line.rentalItemID} • State: ${state}</div>
+                                    </div>
+                                    <div class="text-xs text-gray-700">Remaining: <strong>${maxQty}</strong></div>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                    <div>
+                                        <label class="text-xs text-gray-700">Returned Qty</label>
+                                        <input type="number" min="0" max="${maxQty}" value="0" class="returned-qty">
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-gray-700">Not Returned Qty</label>
+                                        <input type="number" min="0" max="${maxQty}" value="0" class="not-returned-qty">
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-gray-700">Condition</label>
+                                        <select class="line-condition">
+                                            <option value="Good">Good</option>
+                                            <option value="Fair">Fair</option>
+                                            <option value="Poor">Poor</option>
+                                            <option value="Damaged">Damaged</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-gray-700">Notes</label>
+                                        <input type="text" class="line-notes" placeholder="Optional">
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    return `
+                        <div class="line-row bg-white rounded-lg shadow p-4"
+                             data-line-id="${line.rentalItemID}"
+                             data-max="${maxQty}"
+                             data-line-kind="${line.toolInstanceID ? 'serial' : 'bulk'}"
+                             data-required-code="${line.toolInstanceID ? (line.instance?.serialNumber || '') : (line.tool?.serialNumber || '')}"
+                             data-instance-id="${line.toolInstanceID || ''}">
+                            <div class="flex justify-between items-center mb-3">
+                                <div>
+                                    <div class="font-semibold text-gray-900">${toolName}</div>
+                                    <div class="text-xs text-gray-600">Line #${line.rentalItemID} • State: ${state}</div>
+                                    <div class="text-xs text-gray-600">${line.toolInstanceID ? `Preselected instance ID: ${line.toolInstanceID}` : 'Bulk line (no unique instance IDs)'}</div>
+                                </div>
+                                <div class="text-xs text-gray-700">Remaining: <strong class="row-remaining">${maxQty}</strong></div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                <div>
+                                    <label class="text-xs text-gray-700">${line.toolInstanceID ? 'Pick Qty' : 'Pick Qty'}</label>
+                                    ${line.toolInstanceID
+                                        ? `<input type="number" min="0" max="1" value="1" class="picked-qty" readonly>`
+                                        : `<input type="number" min="0" max="${maxQty}" value="0" class="picked-qty">`
+                                    }
+                                </div>
+                                <div>
+                                    <label class="text-xs text-gray-700">Expected Code</label>
+                                    <input type="text" value="${line.toolInstanceID ? (line.instance?.serialNumber || '-') : (line.tool?.serialNumber || 'N/A')}" readonly>
+                                </div>
+                                <div>
+                                    <label class="text-xs text-gray-700">Serial scan/input</label>
+                                    <div class="flex gap-1">
+                                        <input type="text" class="line-serial" placeholder="Scan or type code">
+                                        <button type="button" class="scan-serial-btn px-2 py-1 text-xs border rounded bg-white hover:bg-gray-50">Scan</button>
+                                    </div>
+                                    <div class="line-serial-status text-xs text-gray-500 mt-1">Awaiting validation</div>
+                                </div>
+                                <div>
+                                    <label class="text-xs text-gray-700">Notes</label>
+                                    <input type="text" class="line-notes" placeholder="Optional">
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            async submitChecklist() {
+                if (!this.currentChecklist) return;
+                const { rentalId, type } = this.currentChecklist;
+                const rows = Array.from(document.querySelectorAll('#checklist-lines .line-row'));
+                if (!rows.length) {
+                    alert('No lines available for processing.');
+                    return;
+                }
+
+                if (type === 'outgoing') {
+                    let items;
+                    try {
+                        items = rows.map((row) => {
+                        const lineKind = row.dataset.lineKind || 'bulk';
+                        const rentalItemID = Number(row.dataset.lineId);
+                        const maxQty = Number(row.dataset.max || 0);
+                        const requiredCode = this.normalizeCode(row.dataset.requiredCode || '');
+                        const enteredCode = this.normalizeCode(row.querySelector('.line-serial')?.value || '');
+                        const isValidated = row.dataset.serialValidated === '1';
+                        let pickedQuantity = Number(row.querySelector('.picked-qty')?.value || 0);
+                        if (pickedQuantity < 0 || pickedQuantity > maxQty) throw new Error(`Invalid picked quantity for line ${rentalItemID}`);
+
+                        if (lineKind === 'serial') {
+                            pickedQuantity = isValidated ? 1 : 0;
+                            if (!isValidated) {
+                                return {
+                                    rentalItemID,
+                                    pickedQuantity: 0,
+                                    toolInstanceIDs: [],
+                                    serialInput: null,
+                                    notes: null
+                                };
+                            }
+                        } else if (pickedQuantity > 0 && requiredCode && !isValidated) {
+                            throw new Error(`Line ${rentalItemID}: scan/input must match expected code before pickup.`);
+                        }
+
+                        const preselectedInstanceId = Number(row.dataset.instanceId || 0);
+                        const toolInstanceIDs = preselectedInstanceId > 0 && pickedQuantity > 0 ? [preselectedInstanceId] : [];
+                        let notes = String(row.querySelector('.line-notes')?.value || '').trim();
+                        if (this.photoDataUrl) notes = `${notes}${notes ? ' | ' : ''}PhotoCaptured=true`;
+                        return {
+                            rentalItemID,
+                            pickedQuantity,
+                            toolInstanceIDs,
+                            serialInput: enteredCode || null,
+                            notes: notes || null
+                        };
+                    }).filter(item => item.pickedQuantity > 0 || item.toolInstanceIDs.length > 0);
+                    } catch (error) {
+                        alert(error.message || 'Invalid pickup checklist data.');
+                        return;
+                    }
+
+                    if (!items.length) {
+                        alert('Pick at least one item before submitting.');
+                        return;
+                    }
+
+                    const result = await window.sqlAPI.markItemsForRental(rentalId, {
+                        operatorUserID: 1,
+                        items
+                    });
+                    if (!result) {
+                        alert('Failed to mark items for rental.');
+                        return;
+                    }
+                } else {
+                    const items = rows.map((row) => {
+                        const rentalItemID = Number(row.dataset.lineId);
+                        const maxQty = Number(row.dataset.max || 0);
+                        const returnedQuantity = Number(row.querySelector('.returned-qty')?.value || 0);
+                        const notReturnedQuantity = Number(row.querySelector('.not-returned-qty')?.value || 0);
+                        if (returnedQuantity < 0 || notReturnedQuantity < 0 || returnedQuantity + notReturnedQuantity > maxQty) {
+                            throw new Error(`Invalid return quantities for line ${rentalItemID}`);
+                        }
+                        let notes = String(row.querySelector('.line-notes')?.value || '').trim();
+                        if (this.photoDataUrl) notes = `${notes}${notes ? ' | ' : ''}PhotoCaptured=true`;
+                        return {
+                            rentalItemID,
+                            returnedQuantity,
+                            notReturnedQuantity,
+                            condition: row.querySelector('.line-condition')?.value || 'Good',
+                            notes: notes || null
+                        };
+                    }).filter(item => (item.returnedQuantity + item.notReturnedQuantity) > 0);
+
+                    if (!items.length) {
+                        alert('Mark at least one returned/not-returned quantity before submitting.');
+                        return;
+                    }
+
+                    const result = await window.sqlAPI.receiveMarkedItems(rentalId, {
+                        operatorUserID: 1,
+                        items
+                    });
+                    if (!result) {
+                        alert('Failed to receive marked items.');
+                        return;
+                    }
+                }
+
+                this.closeChecklist();
+                await this.load();
+                alert('Checklist submitted successfully.');
+            }
+
+            normalizeCode(value) {
+                return String(value || '').trim().toUpperCase();
+            }
+
+            validateRowSerial(row) {
+                const expected = this.normalizeCode(row.dataset.requiredCode || '');
+                const entered = this.normalizeCode(row.querySelector('.line-serial')?.value || '');
+                const statusEl = row.querySelector('.line-serial-status');
+                const remainingEl = row.querySelector('.row-remaining');
+                const pickedInput = row.querySelector('.picked-qty');
+                const maxQty = Number(row.dataset.max || 0);
+
+                if (!expected) {
+                    row.dataset.serialValidated = '1';
+                    if (statusEl) statusEl.textContent = entered ? 'Captured.' : 'No code required.';
+                    return true;
+                }
+
+                if (entered && entered === expected) {
+                    row.dataset.serialValidated = '1';
+                    if (statusEl) {
+                        statusEl.textContent = 'Code matched. Ready.';
+                        statusEl.className = 'line-serial-status text-xs text-green-700 mt-1';
+                    }
+                    if ((row.dataset.lineKind || '') === 'serial') {
+                        if (pickedInput) pickedInput.value = '1';
+                        if (remainingEl) remainingEl.textContent = '0';
+                    } else if ((Number(pickedInput?.value || 0) || 0) > 0) {
+                        if (remainingEl) remainingEl.textContent = String(Math.max(0, maxQty - Number(pickedInput.value || 0)));
+                    }
+                    return true;
+                }
+
+                row.dataset.serialValidated = '0';
+                if (statusEl) {
+                    statusEl.textContent = entered ? 'Code mismatch. Pick is not valid.' : 'Awaiting validation';
+                    statusEl.className = 'line-serial-status text-xs text-red-700 mt-1';
+                    if (!entered) statusEl.className = 'line-serial-status text-xs text-gray-500 mt-1';
+                }
+                if ((row.dataset.lineKind || '') === 'serial') {
+                    if (pickedInput) pickedInput.value = '0';
+                    if (remainingEl) remainingEl.textContent = String(maxQty);
+                }
+                return false;
+            }
+
+            async startSerialScanForRow(row) {
+                this.stopSerialScan();
+                this.pendingScanRow = row;
+                const scannerModal = document.getElementById('scanner-modal');
+                const scannerVideo = document.getElementById('scanner-video');
+                const scannerStatus = document.getElementById('scanner-status');
+                if (!scannerModal || !scannerVideo || !scannerStatus) return;
+
+                scannerModal.classList.add('active');
+                scannerStatus.textContent = 'Initializing camera...';
+
+                if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    scannerStatus.textContent = 'Live camera blocked in this browser/context. Opening photo capture...';
+                    this.openFallbackCapture();
+                    return;
+                }
+
+                try {
+                    this.scannerStream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: { ideal: 'environment' } },
+                        audio: false
+                    });
+                    scannerVideo.srcObject = this.scannerStream;
+                    await scannerVideo.play();
+                } catch (error) {
+                    scannerStatus.textContent = 'Camera unavailable. Opening photo capture...';
+                    this.openFallbackCapture();
+                    return;
+                }
+
+                if (!('BarcodeDetector' in window)) {
+                    scannerStatus.textContent = 'Live barcode detector not supported. Opening photo capture...';
+                    this.openFallbackCapture();
+                    return;
+                }
+
+                const detector = new BarcodeDetector({
+                    formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'qr_code']
+                });
+
+                scannerStatus.textContent = 'Scanning... point camera at the barcode.';
+
+                if (this.scannerTimer) clearInterval(this.scannerTimer);
+                if (this.scannerTimeout) clearTimeout(this.scannerTimeout);
+
+                this.scannerTimer = setInterval(async () => {
+                    if (!this.pendingScanRow) return;
+                    try {
+                        const codes = await detector.detect(scannerVideo);
+                        if (!codes || !codes.length) return;
+                        const detected = this.normalizeCode(codes[0].rawValue || '');
+                        if (!detected) return;
+                        const input = this.pendingScanRow.querySelector('.line-serial');
+                        if (input) input.value = detected;
+                        this.validateRowSerial(this.pendingScanRow);
+                        this.stopSerialScan(`Detected: ${detected}`);
+                    } catch (error) {
+                        // keep polling
+                    }
+                }, 300);
+
+                this.scannerTimeout = setTimeout(() => {
+                    this.stopSerialScan('No code detected. Type code manually.');
+                }, 20000);
+            }
+
+            openFallbackCapture() {
+                const scannerFallbackInput = document.getElementById('scanner-fallback-input');
+                if (!scannerFallbackInput) return;
+                scannerFallbackInput.click();
+            }
+
+            async handleCapturedScanImage(file) {
+                const scannerStatus = document.getElementById('scanner-status');
+                if (!this.pendingScanRow) return;
+
+                if (!('BarcodeDetector' in window)) {
+                    if (scannerStatus) scannerStatus.textContent = 'Barcode reading unavailable. Please type code manually.';
+                    return;
+                }
+
+                try {
+                    const detector = new BarcodeDetector({
+                        formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'qr_code']
+                    });
+                    const bitmap = await createImageBitmap(file);
+                    const codes = await detector.detect(bitmap);
+                    if (!codes || !codes.length) {
+                        if (scannerStatus) scannerStatus.textContent = 'No barcode found in photo. Please type code manually.';
+                        return;
+                    }
+                    const detected = this.normalizeCode(codes[0].rawValue || '');
+                    if (!detected) {
+                        if (scannerStatus) scannerStatus.textContent = 'Empty barcode result. Please type code manually.';
+                        return;
+                    }
+                    const input = this.pendingScanRow.querySelector('.line-serial');
+                    if (input) input.value = detected;
+                    this.validateRowSerial(this.pendingScanRow);
+                    this.stopSerialScan(`Detected from photo: ${detected}`);
+                } catch (error) {
+                    if (scannerStatus) scannerStatus.textContent = 'Failed to read barcode from photo. Please type code manually.';
+                }
+            }
+
+            stopSerialScan(message) {
+                const scannerModal = document.getElementById('scanner-modal');
+                const scannerStatus = document.getElementById('scanner-status');
+                if (scannerStatus && message) scannerStatus.textContent = message;
+
+                if (this.scannerTimer) {
+                    clearInterval(this.scannerTimer);
+                    this.scannerTimer = null;
+                }
+                if (this.scannerTimeout) {
+                    clearTimeout(this.scannerTimeout);
+                    this.scannerTimeout = null;
+                }
+                if (this.scannerStream) {
+                    this.scannerStream.getTracks().forEach(track => track.stop());
+                    this.scannerStream = null;
+                }
+                this.pendingScanRow = null;
+                if (scannerModal) scannerModal.classList.remove('active');
+            }
+
+            fileToDataUrl(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+            }
+        }
+
+        const operationsBoard = new OperationsBoard();
+        operationsBoard.init();
+    </script>
+</body>
+</html>

@@ -65,6 +65,9 @@ class EquipmentManager {
             case 'index':
                 this.initializeDashboard();
                 break;
+            case 'operations':
+                // Logic handled by operations.html script
+                break;
             case 'warehouse':
                 // Logic handled by warehouse.html script
                 break;
@@ -79,6 +82,7 @@ class EquipmentManager {
 
     getCurrentPage() {
         const path = window.location.pathname;
+        if (path.includes('operations')) return 'operations';
         if (path.includes('warehouse')) return 'warehouse';
         if (path.includes('catalog')) return 'catalog';
         if (path.includes('rentals')) return 'rentals';
@@ -95,6 +99,7 @@ class EquipmentManager {
         await this.loadRecentActivity();
         this.initializeDashboardCharts();
         await this.loadCalibrationAlerts();
+        this.setupLocateEquipment();
     }
 
     async loadDashboardStats() {
@@ -212,6 +217,116 @@ class EquipmentManager {
     showNotification(message, type = 'info') {
         console.log(`[${type.toUpperCase()}] ${message}`);
         // You can add a toast UI implementation here later
+    }
+
+    async setupLocateEquipment() {
+        this.locateData = [];
+        const openBtn = document.getElementById('open-locate-modal');
+        const modal = document.getElementById('locate-modal');
+        const closeBtn = document.getElementById('close-locate-modal');
+        const input = document.getElementById('locate-search-input');
+        const results = document.getElementById('locate-results');
+        if (!openBtn || !modal || !closeBtn || !input || !results) return;
+
+        openBtn.addEventListener('click', async () => {
+            modal.classList.add('active');
+            input.value = '';
+            results.innerHTML = 'Loading...';
+            await this.loadLocateData();
+            this.renderLocateResults('');
+            input.focus();
+        });
+
+        closeBtn.addEventListener('click', () => modal.classList.remove('active'));
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) modal.classList.remove('active');
+        });
+        input.addEventListener('input', () => this.renderLocateResults(input.value));
+    }
+
+    async loadLocateData() {
+        const [equipment, rentals] = await Promise.all([
+            window.sqlAPI.getEquipment(),
+            window.sqlAPI.getRentals()
+        ]);
+
+        const holderByTool = new Map();
+        (rentals || []).forEach((rental) => {
+            const status = String(rental.status || '');
+            if (!['Active', 'Overdue', 'Reserved'].includes(status)) return;
+            (rental.rentalItems || []).forEach((item) => {
+                const lifecycleState = item?.lifecycle?.state || '';
+                const isPickedOrReserved = ['Picked Up', 'Reserved'].includes(lifecycleState) || !!item.toolInstanceID;
+                if (!isPickedOrReserved) return;
+                const key = `${item.toolID}:${item.toolInstanceID || 0}`;
+                if (!holderByTool.has(key)) {
+                    holderByTool.set(key, {
+                        whoHasIt: `Employee #${rental.employeeID}`,
+                        project: rental.projectCode || '-',
+                        rentalNumber: rental.rentalNumber || '-'
+                    });
+                }
+            });
+        });
+
+        this.locateData = (equipment || []).map((tool) => {
+            const holder = holderByTool.get(`${tool.id}:0`) || null;
+            return {
+                id: tool.id,
+                name: tool.name || '',
+                model: tool.model_number || '',
+                manufacturer: tool.manufacturer || '',
+                serial: tool.serial_number || '',
+                description: tool.description || '',
+                category: `Category ${tool.category_id || '-'}`,
+                where: holder ? 'Checked out / reserved' : (tool.location_code || 'Warehouse / Unassigned'),
+                whoHasIt: holder ? holder.whoHasIt : 'In stock',
+                project: holder ? holder.project : '-',
+                rentalNumber: holder ? holder.rentalNumber : '-'
+            };
+        });
+    }
+
+    renderLocateResults(rawTerm) {
+        const results = document.getElementById('locate-results');
+        if (!results) return;
+        const term = String(rawTerm || '').trim().toLowerCase();
+        let rows = this.locateData || [];
+        if (term) {
+            rows = rows.filter((item) => {
+                const searchable = [
+                    item.name,
+                    item.model,
+                    item.manufacturer,
+                    item.serial,
+                    item.description,
+                    item.category,
+                    item.where,
+                    item.whoHasIt,
+                    item.project,
+                    item.rentalNumber
+                ].join(' ').toLowerCase();
+                return searchable.includes(term);
+            });
+        }
+
+        if (!rows.length) {
+            results.innerHTML = '<div class="text-sm text-gray-500">No matching equipment found.</div>';
+            return;
+        }
+
+        results.innerHTML = rows.map((item) => `
+            <div class="border rounded p-3 bg-white">
+                <div class="font-semibold text-gray-900">${item.name} <span class="text-xs text-gray-500">(${item.serial || 'No serial'})</span></div>
+                <div class="text-xs text-gray-600 mt-1">${item.manufacturer} ${item.model ? `• ${item.model}` : ''} • ${item.category}</div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-2 mt-2 text-xs">
+                    <div><strong>Who has it:</strong> ${item.whoHasIt}</div>
+                    <div><strong>Where is it:</strong> ${item.where}</div>
+                    <div><strong>Project:</strong> ${item.project}</div>
+                    <div><strong>Rental no:</strong> ${item.rentalNumber}</div>
+                </div>
+            </div>
+        `).join('');
     }
 }
 

@@ -553,6 +553,20 @@
             </div>
             
             <div class="mt-4 space-y-3">
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Employee ID</label>
+                        <input type="number" id="rental-employee" min="1" value="1" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Project Code</label>
+                        <input type="text" id="rental-project" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. PRJ-2026-01">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Purpose</label>
+                    <input type="text" id="rental-purpose" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Rental purpose">
+                </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Rental Start Date</label>
                     <input type="date" id="rental-start" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -561,11 +575,37 @@
                     <label class="block text-sm font-medium text-gray-700 mb-1">Rental End Date</label>
                     <input type="date" id="rental-end" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
+                <div id="kiosk-fields" class="hidden space-y-2 border border-gray-200 rounded-md p-3 bg-gray-50">
+                    <div class="text-sm font-medium text-gray-800">Kiosk Mode</div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">PIN Code</label>
+                        <input type="password" id="kiosk-pin" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter PIN">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Pickup Photo</label>
+                        <input type="file" accept="image/*" capture="environment" id="kiosk-photo" class="w-full text-sm text-gray-700">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="catalogManager.saveCartAsOffer()" id="save-offer-btn" class="px-3 py-2 border border-blue-600 text-blue-700 rounded-md hover:bg-blue-50 font-medium">
+                        Save as Offer
+                    </button>
+                    <button onclick="catalogManager.printCurrentCartOffer()" id="print-offer-btn" class="px-3 py-2 border border-gray-400 text-gray-700 rounded-md hover:bg-gray-50 font-medium">
+                        Print Offer
+                    </button>
+                </div>
+                <div class="flex gap-2">
+                    <input type="text" id="offer-number" class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Offer number (e.g. 260001)">
+                    <button onclick="catalogManager.loadOfferIntoCart()" id="load-offer-btn" class="px-3 py-2 border border-green-600 text-green-700 rounded-md hover:bg-green-50 font-medium">
+                        Load Offer
+                    </button>
+                </div>
             </div>
             
             <button onclick="catalogManager.proceedToCheckout()" id="checkout-btn" class="checkout-btn w-full mt-4" disabled>
                 Proceed to Checkout
             </button>
+            <div id="checkout-result" class="text-xs text-gray-600 mt-2"></div>
         </div>
     </div>
 
@@ -792,6 +832,7 @@
             constructor() {
                 this.equipment = [];
                 this.cart = [];
+                this.isKioskMode = false;
                 this.currentView = 'grid';
                 this._createToolDraft = null;
                 this._editMode = false;
@@ -809,6 +850,9 @@
             }
 
             async init() {
+                const params = new URLSearchParams(window.location.search);
+                this.isKioskMode = params.get('mode') === 'kiosk';
+
                 // 1. Wait for SQL API to load
                 let attempts = 0;
                 while (!window.sqlAPI && attempts < 10) {
@@ -824,6 +868,16 @@
 
                 this.setupEventListeners();
                 this.updateCartDisplay();
+                this.configureModeUI();
+            }
+
+            configureModeUI() {
+                const kioskFields = document.getElementById('kiosk-fields');
+                const checkoutBtn = document.getElementById('checkout-btn');
+                if (this.isKioskMode) {
+                    if (kioskFields) kioskFields.classList.remove('hidden');
+                    if (checkoutBtn) checkoutBtn.textContent = 'Confirm and Lend (Kiosk)';
+                }
             }
 
             async loadEquipment() {
@@ -901,6 +955,16 @@
                 document.getElementById('rental-end').addEventListener('change', () => {
                     this.updateCartTotal();
                 });
+
+                const offerInput = document.getElementById('offer-number');
+                if (offerInput) {
+                    offerInput.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            this.loadOfferIntoCart();
+                        }
+                    });
+                }
 
                 // Create tool modal
                 const createForm = document.getElementById('create-tool-form');
@@ -1845,12 +1909,228 @@
             }
 
             proceedToCheckout() {
-                // Implementation for checkout
                 if (this.cart.length === 0) {
                     alert('Your cart is empty');
                     return;
                 }
-                alert('Checkout feature coming soon!');
+                this.executeCheckout().catch((error) => {
+                    console.error(error);
+                    alert(`Checkout failed: ${error?.message || error}`);
+                });
+            }
+
+            getRentalFormData() {
+                const employeeID = parseInt(document.getElementById('rental-employee')?.value || '0', 10);
+                const projectCode = (document.getElementById('rental-project')?.value || '').trim();
+                const purpose = (document.getElementById('rental-purpose')?.value || '').trim() || 'Webshop rental';
+                const startDate = document.getElementById('rental-start')?.value;
+                const endDate = document.getElementById('rental-end')?.value;
+                return { employeeID, projectCode, purpose, startDate, endDate };
+            }
+
+            buildRentalItemsPayload() {
+                return this.cart.map(item => ({
+                    toolID: item.id,
+                    quantity: item.quantity,
+                    dailyCost: item.daily_rental_cost || 0,
+                    assignmentMode: 'auto',
+                    allowDeficit: true
+                }));
+            }
+
+            async executeCheckout() {
+                const form = this.getRentalFormData();
+                if (!form.employeeID || form.employeeID < 1) {
+                    alert('Employee ID is required.');
+                    return;
+                }
+                if (!form.startDate || !form.endDate) {
+                    alert('Select rental start and end date.');
+                    return;
+                }
+
+                const resultEl = document.getElementById('checkout-result');
+                if (resultEl) resultEl.textContent = this.isKioskMode ? 'Submitting kiosk lend...' : 'Submitting checkout...';
+
+                if (this.isKioskMode) {
+                    const pinCode = (document.getElementById('kiosk-pin')?.value || '').trim();
+                    if (pinCode.length < 4) {
+                        alert('PIN code must be at least 4 characters.');
+                        return;
+                    }
+
+                    let photoDataUrl = null;
+                    const fileInput = document.getElementById('kiosk-photo');
+                    const file = fileInput?.files?.[0];
+                    if (file) {
+                        photoDataUrl = await this.fileToDataUrl(file);
+                    }
+
+                    const payload = {
+                        employeeID: form.employeeID,
+                        pinCode,
+                        projectCode: form.projectCode || null,
+                        purpose: form.purpose,
+                        startDate: form.startDate,
+                        endDate: form.endDate,
+                        photoDataUrl,
+                        rentalItems: this.buildRentalItemsPayload()
+                    };
+                    const response = await window.sqlAPI.kioskLend(payload);
+                    if (!response) {
+                        alert('Kiosk lend failed.');
+                        return;
+                    }
+                    const pickupSummary = (response.pickupItems || [])
+                        .map(i => `${i.toolName} (${i.serialNumber}) @ ${i.locationCode || 'No location'}`)
+                        .join('\n');
+                    alert(`Kiosk lend created: ${response.rental?.rentalNumber || 'N/A'}\n\nPick up:\n${pickupSummary || 'No assigned instances.'}`);
+                    if (resultEl) resultEl.textContent = `Kiosk lend created: ${response.rental?.rentalNumber || ''}`;
+                } else {
+                    const payload = {
+                        employeeID: form.employeeID,
+                        purpose: form.purpose,
+                        projectCode: form.projectCode || null,
+                        startDate: form.startDate,
+                        endDate: form.endDate,
+                        notes: 'Checkout from webshop cart',
+                        status: 'Reserved',
+                        rentalItems: this.buildRentalItemsPayload()
+                    };
+                    const created = await window.sqlAPI.createRentalDetailed(payload);
+                    if (!created) {
+                        alert('Checkout failed.');
+                        return;
+                    }
+                    alert(`Reservation created: ${created.rentalNumber}`);
+                    if (resultEl) resultEl.textContent = `Reservation created: ${created.rentalNumber}`;
+                }
+
+                this.cart = [];
+                this.updateCartDisplay();
+                this.toggleCart();
+            }
+
+            async saveCartAsOffer() {
+                const form = this.getRentalFormData();
+                if (!form.startDate || !form.endDate) {
+                    alert('Select rental start and end date to create an offer.');
+                    return;
+                }
+                if (!form.employeeID || form.employeeID < 1) {
+                    alert('Employee ID is required.');
+                    return;
+                }
+                if (this.cart.length === 0) {
+                    alert('Cart is empty.');
+                    return;
+                }
+
+                const payload = {
+                    employeeID: form.employeeID,
+                    purpose: form.purpose || 'Webshop offer',
+                    projectCode: form.projectCode || null,
+                    startDate: form.startDate,
+                    endDate: form.endDate,
+                    notes: 'Saved as webshop offer',
+                    status: 'Offer',
+                    rentalItems: this.buildRentalItemsPayload()
+                };
+
+                const created = await window.sqlAPI.createRentalDetailed(payload);
+                if (!created) {
+                    alert('Failed to save offer.');
+                    return;
+                }
+                const input = document.getElementById('offer-number');
+                if (input) input.value = created.rentalNumber || '';
+                alert(`Offer saved: ${created.rentalNumber}`);
+            }
+
+            async loadOfferIntoCart() {
+                const input = document.getElementById('offer-number');
+                const offerNumber = (input?.value || '').trim().toUpperCase();
+                if (!offerNumber) {
+                    alert('Enter an offer number.');
+                    return;
+                }
+                const offer = await window.sqlAPI.getOfferByNumber(offerNumber);
+                if (!offer) {
+                    alert('Offer not found.');
+                    return;
+                }
+
+                document.getElementById('rental-start').value = (offer.startDate || '').split('T')[0] || offer.startDate || '';
+                document.getElementById('rental-end').value = (offer.endDate || '').split('T')[0] || offer.endDate || '';
+                document.getElementById('rental-employee').value = String(offer.employeeID || 1);
+                document.getElementById('rental-project').value = offer.projectCode || '';
+                document.getElementById('rental-purpose').value = offer.purpose || '';
+
+                this.cart = [];
+                const grouped = {};
+                (offer.rentalItems || []).forEach(item => {
+                    grouped[item.toolID] = grouped[item.toolID] || { quantity: 0, dailyCost: Number(item.dailyCost || 0) };
+                    grouped[item.toolID].quantity += Number(item.quantity || 0);
+                });
+
+                Object.keys(grouped).forEach(toolIdRaw => {
+                    const toolId = parseInt(toolIdRaw, 10);
+                    const eq = this.equipment.find(e => e.id === toolId);
+                    if (!eq) return;
+                    this.cart.push({
+                        ...eq,
+                        quantity: grouped[toolId].quantity || 1,
+                        daily_rental_cost: grouped[toolId].dailyCost || eq.daily_rental_cost || 0
+                    });
+                });
+
+                this.updateCartDisplay();
+                alert(`Offer ${offerNumber} loaded into cart.`);
+            }
+
+            printCurrentCartOffer() {
+                if (this.cart.length === 0) {
+                    alert('Cart is empty.');
+                    return;
+                }
+                const form = this.getRentalFormData();
+                const startDate = form.startDate || '-';
+                const endDate = form.endDate || '-';
+                const rentalDays = (startDate && endDate) ? Math.max(1, Math.ceil((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24))) : 1;
+                const rows = this.cart.map(item => {
+                    const lineTotal = (item.daily_rental_cost || 0) * item.quantity * rentalDays;
+                    return `<tr><td>${this.escapeHtml(item.name)}</td><td>${item.quantity}</td><td>$${(item.daily_rental_cost || 0).toFixed(2)}</td><td>$${lineTotal.toFixed(2)}</td></tr>`;
+                }).join('');
+                const grandTotal = this.cart.reduce((sum, item) => sum + ((item.daily_rental_cost || 0) * item.quantity * rentalDays), 0);
+                const offerNumber = (document.getElementById('offer-number')?.value || 'UNSAVED').trim();
+
+                const html = `
+                    <html><head><title>Rental Offer ${offerNumber}</title></head><body>
+                    <h2>Rental Offer ${offerNumber}</h2>
+                    <p>Employee ID: ${form.employeeID || '-'}</p>
+                    <p>Project: ${this.escapeHtml(form.projectCode || '-')}</p>
+                    <p>Purpose: ${this.escapeHtml(form.purpose || '-')}</p>
+                    <p>Period: ${startDate} to ${endDate} (${rentalDays} day(s))</p>
+                    <table border="1" cellspacing="0" cellpadding="6">
+                        <thead><tr><th>Tool</th><th>Qty</th><th>Per Day</th><th>Line Total</th></tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                    <p><strong>Total: $${grandTotal.toFixed(2)}</strong></p>
+                    </body></html>`;
+                const popup = window.open('', '_blank');
+                popup.document.write(html);
+                popup.document.close();
+                popup.focus();
+                popup.print();
+            }
+
+            fileToDataUrl(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
             }
 
             performSearch() {

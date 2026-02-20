@@ -355,6 +355,28 @@
         </div>
     </div>
 
+    <!-- Reservation Decision Modal -->
+    <div id="reservation-decision-modal" class="modal">
+        <div class="modal-content">
+            <div class="p-6 space-y-4">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-2xl font-bold">Reservation Review</h2>
+                    <button type="button" onclick="rentalManager.closeModal('reservation-decision-modal')" class="px-3 py-1 border rounded">Close</button>
+                </div>
+                <div id="reservation-summary" class="text-sm text-gray-700"></div>
+                <div id="reservation-lines" class="space-y-2 max-h-72 overflow-y-auto border rounded p-3 bg-gray-50"></div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Reject Reason (required for reject)</label>
+                    <textarea id="reservation-reject-reason" class="form-input" rows="2" placeholder="Enter reason if rejecting"></textarea>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="button" class="flex-1 px-4 py-2 bg-green-600 text-white rounded" onclick="rentalManager.submitReservationDecision('approve')">Accept Reservation</button>
+                    <button type="button" class="flex-1 px-4 py-2 bg-red-600 text-white rounded" onclick="rentalManager.submitReservationDecision('reject')">Reject Reservation</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="app-config.js"></script>
     <script src="api-simulation.js"></script>
     <script src="main.js"></script>
@@ -364,6 +386,8 @@
                 this.rentals = [];
                 this.currentFilter = 'all';
                 this.selectedRentalId = null;
+                this.reservationReview = null;
+                this.availabilityCache = new Map();
                 this.init();
             }
 
@@ -376,24 +400,69 @@
             async loadRentalsFromSQL() {
                 try {
                     const data = await window.sqlAPI.getRentals();
-                    this.rentals = data.map(r => ({
-                        id: r.rentalID,
-                        user: { name: `Employee #${r.employeeID}`, department: 'General' },
-                        purpose: r.purpose,
-                        project_code: r.projectCode,
-                        status: r.status,
-                        start_date: r.startDate,
-                        end_date: r.endDate,
-                        total_cost: r.totalCost,
-                        rental_number: r.rentalNumber,
-                        equipment: (r.rentalItems || []).map(i => ({
-                            name: i.tool ? i.tool.toolName : 'Tool',
-                            serial: i.tool ? i.tool.serialNumber : 'N/A'
-                        }))
+                    this.rentals = await Promise.all((data || []).map(async (r) => {
+                        const pendingAvailability = await this.evaluatePendingAvailability(r);
+                        return {
+                            id: r.rentalID,
+                            raw: r,
+                            user: { name: `Employee #${r.employeeID}`, department: 'General' },
+                            purpose: r.purpose,
+                            project_code: r.projectCode,
+                            status: this.getUiStatus(r),
+                            start_date: r.startDate,
+                            end_date: r.endDate,
+                            total_cost: r.totalCost,
+                            rental_number: r.rentalNumber,
+                            hasAvailabilityIssues: pendingAvailability.hasIssues,
+                            pendingAvailabilityLines: pendingAvailability.lines,
+                            equipment: (r.rentalItems || []).map(i => ({
+                                name: i.tool ? i.tool.toolName : 'Tool',
+                                serial: i.instance ? i.instance.serialNumber : (i.tool ? i.tool.serialNumber : 'N/A')
+                            }))
+                        };
                     }));
                     this.renderRentals();
                     this.calculateStats();
                 } catch (e) { console.error(e); }
+            }
+
+            async evaluatePendingAvailability(rental) {
+                const uiStatus = this.getUiStatus(rental);
+                if (uiStatus !== 'Pending') return { hasIssues: false, lines: [] };
+
+                const lines = (rental.rentalItems || []).filter(i => {
+                    const state = (i.lifecycle && i.lifecycle.state) || '';
+                    return (state === 'Pending Approval' || state === '' || state === 'Pending Pickup') && Number(i.quantity || 0) > 0;
+                });
+                if (!lines.length) return { hasIssues: false, lines: [] };
+
+                const output = [];
+                for (const line of lines) {
+                    const key = `${line.toolID}|${rental.startDate}|${rental.endDate}|${line.quantity}`;
+                    let availability = this.availabilityCache.get(key);
+                    if (!availability) {
+                        availability = await window.sqlAPI.getRentalAvailability(line.toolID, rental.startDate, rental.endDate, line.quantity);
+                        if (availability) this.availabilityCache.set(key, availability);
+                    }
+                    const deficit = Number(availability?.deficit || 0);
+                    output.push({
+                        rentalItemID: line.rentalItemID,
+                        toolID: line.toolID,
+                        toolName: line.tool?.toolName || `Tool ${line.toolID}`,
+                        quantity: Number(line.quantity || 0),
+                        available: deficit <= 0,
+                        deficit
+                    });
+                }
+                return { hasIssues: output.some(x => !x.available), lines: output };
+            }
+
+            getUiStatus(rental) {
+                const status = rental?.status;
+                if (status === 'Reserved' && rental?.approvalDate) return 'Approved';
+                if (status === 'Reserved' || status === 'Offer') return 'Pending';
+                if (status === 'Closed') return 'Cancelled';
+                return status || 'Pending';
             }
 
             setupEventListeners() {
@@ -453,21 +522,26 @@
                 filtered.forEach(rental => {
                     let buttons = '';
                     if (rental.status === 'Pending') {
-                        buttons = `<button onclick="rentalManager.updateStatus(${rental.id}, 'approve')" class="action-btn success text-xs mr-2">Approve</button>
-                                       <button onclick="rentalManager.updateStatus(${rental.id}, 'cancel')" class="action-btn danger text-xs">Reject</button>`;
+                        if (!rental.hasAvailabilityIssues) {
+                            buttons = `<button onclick="event.stopPropagation(); rentalManager.updateStatus(${rental.id}, 'approve')" class="action-btn success text-xs mr-2">Approve</button>
+                                       <button onclick="event.stopPropagation(); rentalManager.updateStatus(${rental.id}, 'cancel')" class="action-btn danger text-xs">Reject</button>`;
+                        } else {
+                            buttons = `<span class="text-xs text-yellow-700 font-medium">Review Required</span>`;
+                        }
                     } else if (rental.status === 'Active') {
-                        buttons = `<button onclick="rentalManager.openModal(${rental.id}, 'return-modal')" class="action-btn primary text-xs mr-2">Return</button>
-                                       <button onclick="rentalManager.openModal(${rental.id}, 'extend-modal')" class="action-btn warning text-xs">Extend</button>`;
+                        buttons = `<button onclick="event.stopPropagation(); rentalManager.openModal(${rental.id}, 'return-modal')" class="action-btn primary text-xs mr-2">Return</button>
+                                       <button onclick="event.stopPropagation(); rentalManager.openModal(${rental.id}, 'extend-modal')" class="action-btn warning text-xs">Extend</button>`;
                     } else if (rental.status === 'Overdue') {
-                        buttons = `<button onclick="rentalManager.openModal(${rental.id}, 'return-modal')" class="action-btn primary text-xs mr-2">Force Return</button>
-                                       <button onclick="rentalManager.openModal(${rental.id}, 'extend-modal')" class="action-btn warning text-xs mr-2">Force Extend</button>
-                                       <button onclick="rentalManager.markLost(${rental.id})" class="action-btn danger text-xs">Mark Lost</button>`;
+                        buttons = `<button onclick="event.stopPropagation(); rentalManager.openModal(${rental.id}, 'return-modal')" class="action-btn primary text-xs mr-2">Force Return</button>
+                                       <button onclick="event.stopPropagation(); rentalManager.openModal(${rental.id}, 'extend-modal')" class="action-btn warning text-xs mr-2">Force Extend</button>
+                                       <button onclick="event.stopPropagation(); rentalManager.markLost(${rental.id})" class="action-btn danger text-xs">Mark Lost</button>`;
                     }
 
                     const equipList = rental.equipment.map(e => `<div>${e.name} (${e.serial})</div>`).join('');
+                    const clickable = rental.status === 'Pending';
 
                     container.innerHTML += `
-                            <div class="rental-card ${rental.status.toLowerCase()} p-6 border rounded shadow mb-4 bg-white border-l-4">
+                            <div class="rental-card ${rental.status.toLowerCase()} p-6 border rounded shadow mb-4 bg-white border-l-4 ${clickable ? 'cursor-pointer' : ''}" ${clickable ? `onclick="rentalManager.openReservationCard(${rental.id})"` : ''}>
                                 <div class="flex justify-between mb-2">
                                     <h3 class="font-bold">${rental.rental_number || 'ID: ' + rental.id}</h3>
                                     <span class="status-badge status-${rental.status.toLowerCase()}">${rental.status}</span>
@@ -505,9 +579,127 @@
             // Actions
             async updateStatus(id, action) {
                 if (confirm('Proceed?')) {
-                    await window.sqlAPI.updateRentalStatus(id, action);
+                    if (action === 'cancel') {
+                        const reason = prompt('Enter rejection reason:');
+                        if (!reason || !reason.trim()) {
+                            alert('Rejection reason is required.');
+                            return;
+                        }
+                        const decided = await window.sqlAPI.decideReservation(id, {
+                            decision: 'reject',
+                            reason: reason.trim(),
+                            operatorUserID: 1
+                        });
+                        if (!decided) {
+                            alert('Reject failed.');
+                            return;
+                        }
+                    } else {
+                        await window.sqlAPI.updateRentalStatus(id, action);
+                    }
                     this.loadRentalsFromSQL();
                 }
+            }
+
+            async openReservationCard(id) {
+                const rental = this.rentals.find(r => r.id === id);
+                if (!rental || rental.status !== 'Pending') return;
+
+                const latest = await window.sqlAPI.getRental(id);
+                if (!latest) {
+                    alert('Could not load reservation details.');
+                    return;
+                }
+                const availability = await this.evaluatePendingAvailability(latest);
+                this.reservationReview = {
+                    id,
+                    rental: latest,
+                    availabilityLines: availability.lines
+                };
+                this.renderReservationReviewModal();
+                this.openModal(id, 'reservation-decision-modal');
+            }
+
+            renderReservationReviewModal() {
+                if (!this.reservationReview) return;
+                const { rental, availabilityLines } = this.reservationReview;
+                const summary = document.getElementById('reservation-summary');
+                const linesEl = document.getElementById('reservation-lines');
+                if (summary) {
+                    summary.innerHTML = `
+                        <div><strong>Reservation:</strong> ${rental.rentalNumber}</div>
+                        <div><strong>Employee:</strong> ${rental.employeeID}</div>
+                        <div><strong>Project:</strong> ${rental.projectCode || '-'}</div>
+                        <div><strong>Period:</strong> ${new Date(rental.startDate).toLocaleDateString()} - ${new Date(rental.endDate).toLocaleDateString()}</div>
+                    `;
+                }
+                if (linesEl) {
+                    linesEl.innerHTML = '';
+                    availabilityLines.forEach((line) => {
+                        const row = document.createElement('div');
+                        row.className = 'border rounded bg-white p-3';
+                        const unavailable = !line.available;
+                        row.innerHTML = `
+                            <div class="flex justify-between items-center mb-2">
+                                <div class="font-medium">${line.toolName}</div>
+                                <div class="text-xs ${unavailable ? 'text-red-700' : 'text-green-700'}">
+                                    ${unavailable ? `Unavailable (${line.deficit} short)` : 'Available'}
+                                </div>
+                            </div>
+                            <div class="text-xs text-gray-600 mb-2">Requested quantity: ${line.quantity}</div>
+                            ${unavailable ? `
+                                <label class="text-xs text-gray-700">Action</label>
+                                <select id="shortage-action-${line.rentalItemID}" class="form-input text-sm">
+                                    <option value="replacement">Replacement</option>
+                                    <option value="procure">Procure</option>
+                                    <option value="exclude">Exclude from order</option>
+                                </select>
+                            ` : ''}
+                        `;
+                        linesEl.appendChild(row);
+                    });
+                    if (!availabilityLines.length) {
+                        linesEl.innerHTML = '<div class="text-sm text-gray-500">No pending lines found.</div>';
+                    }
+                }
+                const reasonEl = document.getElementById('reservation-reject-reason');
+                if (reasonEl) reasonEl.value = '';
+            }
+
+            async submitReservationDecision(decision) {
+                if (!this.reservationReview) return;
+                const { id, availabilityLines } = this.reservationReview;
+                const reason = (document.getElementById('reservation-reject-reason')?.value || '').trim();
+                if (decision === 'reject' && !reason) {
+                    alert('Reject reason is required.');
+                    return;
+                }
+
+                const shortageActions = availabilityLines
+                    .filter(line => !line.available)
+                    .map((line) => {
+                        const actionEl = document.getElementById(`shortage-action-${line.rentalItemID}`);
+                        return {
+                            rentalItemID: line.rentalItemID,
+                            action: (actionEl?.value || 'replacement')
+                        };
+                    });
+
+                const payload = {
+                    decision,
+                    reason: decision === 'reject' ? reason : null,
+                    operatorUserID: 1,
+                    shortageActions
+                };
+                const result = await window.sqlAPI.decideReservation(id, payload);
+                if (!result) {
+                    alert(`Failed to ${decision} reservation.`);
+                    return;
+                }
+
+                this.closeModal('reservation-decision-modal');
+                this.reservationReview = null;
+                await this.loadRentalsFromSQL();
             }
 
             async markLost(id) {
@@ -635,5 +827,3 @@
     </script>
 </body>
 </html>
-
-
