@@ -1,5 +1,7 @@
 # Asset Management deployment checklist
 
+Canonical operations reference: `BASICS.md`
+
 These steps mirror the TimeApp + TED_Tender_Robot deployment pattern.
 
 ## 1) Package the project locally (Windows PowerShell)
@@ -58,22 +60,8 @@ Paste values from `.env.example` and set real SQL Server credentials.
 Run the SQL script in SSMS or sqlcmd:
 
 ```
--- from repo root
-schema_toolinstances.sql
-```
-
-## 5c) Instance numbering migration
-
-Run after ToolInstances exists:
-
-```
-schema_toolinstances_instance_number.sql
-```
-
-## 5d) Independent features schema update
-
-```
-schema_independents.sql
+asset_management_stage/20260221_1400_schema_reconcile.sql
+asset_management_stage/20260221_1605_atlas_users.sql
 ```
 
 ## 6) Install dependencies in the venv

@@ -15,6 +15,7 @@ class EmployeeDirectoryError(RuntimeError):
 _CACHE_TTL_SECONDS = 300
 _EMPLOYEE_CACHE: dict[str, dict[str, str]] = {}
 _CACHE_EXPIRES_AT = 0.0
+_LAST_ERROR = ""
 
 
 def _require_env(name: str) -> str:
@@ -91,12 +92,20 @@ def _fetch_employee_rows() -> list[dict[str, Any]]:
 
 
 def get_employee_directory(force_refresh: bool = False) -> dict[str, dict[str, str]]:
-    global _CACHE_EXPIRES_AT
+    global _CACHE_EXPIRES_AT, _LAST_ERROR
     now = time.time()
     if not force_refresh and _EMPLOYEE_CACHE and now < _CACHE_EXPIRES_AT:
         return dict(_EMPLOYEE_CACHE)
 
-    rows = _fetch_employee_rows()
+    try:
+        rows = _fetch_employee_rows()
+    except EmployeeDirectoryError as exc:
+        _LAST_ERROR = str(exc)
+        # Keep serving stale cache if it exists.
+        if _EMPLOYEE_CACHE:
+            return dict(_EMPLOYEE_CACHE)
+        raise
+
     parsed: dict[str, dict[str, str]] = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -109,6 +118,7 @@ def get_employee_directory(force_refresh: bool = False) -> dict[str, dict[str, s
     _EMPLOYEE_CACHE.clear()
     _EMPLOYEE_CACHE.update(parsed)
     _CACHE_EXPIRES_AT = now + _CACHE_TTL_SECONDS
+    _LAST_ERROR = ""
     return dict(_EMPLOYEE_CACHE)
 
 
@@ -117,3 +127,14 @@ def get_employees_list(force_refresh: bool = False) -> list[dict[str, str]]:
     rows = list(directory.values())
     rows.sort(key=lambda item: (item["name"].lower(), item["normalizedNumber"]))
     return rows
+
+
+def get_directory_status() -> dict[str, str | int]:
+    now = time.time()
+    cache_count = len(_EMPLOYEE_CACHE)
+    cache_expires_in = int(max(0.0, _CACHE_EXPIRES_AT - now))
+    return {
+        "cacheCount": cache_count,
+        "cacheExpiresInSeconds": cache_expires_in,
+        "lastError": _LAST_ERROR,
+    }

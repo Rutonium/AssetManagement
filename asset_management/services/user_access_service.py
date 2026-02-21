@@ -5,8 +5,11 @@ import json
 import secrets
 import threading
 import time
+import base64
+import hmac
 from pathlib import Path
 from typing import Any
+import os
 
 
 DEFAULT_PASSWORD = "1234"
@@ -35,6 +38,7 @@ _DATA_DIR = _BASE_DIR / "data"
 _STORE_PATH = _DATA_DIR / "user_access.json"
 _LOCK = threading.Lock()
 _SESSIONS: dict[str, dict[str, Any]] = {}
+_SESSION_SECRET = (os.environ.get("SESSION_SIGNING_SECRET") or "asset-management-session-secret-change-me").encode("utf-8")
 
 
 def _ensure_data_dir() -> None:
@@ -185,10 +189,14 @@ def verify_password(employee_id: int, pin_code: str) -> bool:
 
 
 def create_session(payload: dict[str, Any]) -> str:
-    token = secrets.token_urlsafe(32)
     expires_at = time.time() + SESSION_TTL_SECONDS
     session_payload = dict(payload)
     session_payload["expiresAt"] = expires_at
+    body = json.dumps(session_payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(body).decode("ascii").rstrip("=")
+    signature = hmac.new(_SESSION_SECRET, encoded.encode("ascii"), hashlib.sha256).digest()
+    encoded_sig = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    token = f"{encoded}.{encoded_sig}"
     with _LOCK:
         _SESSIONS[token] = session_payload
     return token
@@ -198,15 +206,39 @@ def get_session(token: str | None) -> dict[str, Any] | None:
     if not token:
         return None
     now = time.time()
-    with _LOCK:
-        session = _SESSIONS.get(token)
-        if not session:
-            return None
-        expires_at = float(session.get("expiresAt") or 0.0)
-        if now >= expires_at:
-            _SESSIONS.pop(token, None)
-            return None
-        return dict(session)
+    try:
+        encoded, encoded_sig = token.split(".", 1)
+    except ValueError:
+        with _LOCK:
+            session = _SESSIONS.get(token)
+            if not session:
+                return None
+            expires_at = float(session.get("expiresAt") or 0.0)
+            if now >= expires_at:
+                _SESSIONS.pop(token, None)
+                return None
+            return dict(session)
+
+    expected_sig = hmac.new(_SESSION_SECRET, encoded.encode("ascii"), hashlib.sha256).digest()
+    try:
+        supplied_sig = base64.urlsafe_b64decode(encoded_sig + "=" * (-len(encoded_sig) % 4))
+    except Exception:
+        return None
+    if not hmac.compare_digest(expected_sig, supplied_sig):
+        return None
+
+    try:
+        payload_raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        session = json.loads(payload_raw.decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(session, dict):
+        return None
+
+    expires_at = float(session.get("expiresAt") or 0.0)
+    if now >= expires_at:
+        return None
+    return dict(session)
 
 
 def remove_session(token: str | None) -> None:

@@ -135,11 +135,25 @@ class SQLServerAPI {
         return this._getJson(`${this.baseUrl}/admin/users${qs}`);
     }
 
+    async createAdminUser(payload) {
+        return this._getJson(`${this.baseUrl}/admin/users`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {})
+        });
+    }
+
     async updateAdminUser(employeeID, payload) {
         return this._getJson(`${this.baseUrl}/admin/users/${employeeID}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload || {})
+        });
+    }
+
+    async deleteAdminUser(employeeID) {
+        return this._getJson(`${this.baseUrl}/admin/users/${employeeID}`, {
+            method: 'DELETE'
         });
     }
 
@@ -151,12 +165,15 @@ class SQLServerAPI {
         return this._getJson(`${this.baseUrl}/projects/search?${params.toString()}`);
     }
 
-    async getEmployees(forceRefresh = false) {
+    async getEmployees(forceRefresh = false, throwOnError = false) {
         try {
             const qs = forceRefresh ? '?forceRefresh=true' : '';
             return await this._getJson(`${this.baseUrl}/employees${qs}`);
         } catch (error) {
             console.error('Error fetching employees:', error);
+            if (throwOnError) {
+                throw error;
+            }
             return [];
         }
     }

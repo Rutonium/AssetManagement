@@ -240,3 +240,20 @@ class NotificationQueue(Base):
     Payload = Column(String(2000))
     CreatedAt = Column(DateTime, server_default=func.now())
     SentAt = Column(DateTime)
+
+
+class AtlasUser(Base):
+    __tablename__ = "AtlasUsers"
+    __table_args__ = {"schema": "dbo"}
+
+    EmployeeID = Column(Integer, primary_key=True)
+    AssetManagementRole = Column(String(50), nullable=False)
+    AssetManagementRights = Column(String)
+    TimeAppRights = Column(String)
+    PeoplePlannerRights = Column(String)
+    PasswordHash = Column(String(256))
+    PasswordSalt = Column(String(64))
+    PasswordUpdatedAt = Column(Integer)
+    IsActive = Column(Boolean, default=True)
+    CreatedAt = Column(DateTime, server_default=func.now())
+    UpdatedAt = Column(DateTime, server_default=func.now())

@@ -34,17 +34,16 @@
         <div class="bg-white rounded-lg shadow p-6">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-2xl font-bold text-gray-900">User Control</h2>
-                <button id="refresh-users" class="px-3 py-2 border rounded text-sm hover:bg-gray-50">Refresh</button>
+                <button id="open-create-modal" class="px-3 py-2 bg-blue-700 text-white rounded text-sm hover:bg-blue-600">Create User</button>
             </div>
-            <p class="text-sm text-gray-600 mb-4">Manage roles, rights, and login codes. Default code is <strong>1234</strong> until changed.</p>
+            <p class="text-sm text-gray-600 mb-4">Manage AssetManagement users and rights. Default code is <strong>1234</strong> until changed.</p>
             <div id="status" class="text-sm mb-3"></div>
             <div class="overflow-x-auto">
                 <table class="min-w-full text-sm border">
                     <thead class="bg-gray-100">
                         <tr>
-                            <th class="p-2 border text-left">Employee</th>
-                            <th class="p-2 border text-left">Role</th>
-                            <th class="p-2 border text-left">Rights</th>
+                            <th class="p-2 border text-left">Employee ID</th>
+                            <th class="p-2 border text-left">Asset Right</th>
                             <th class="p-2 border text-left">Code</th>
                             <th class="p-2 border text-left">Action</th>
                         </tr>
@@ -55,6 +54,50 @@
         </div>
     </main>
 
+    <div id="user-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[2100] px-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-5">
+            <div class="flex items-center justify-between mb-4">
+                <h3 id="modal-title" class="text-xl font-bold text-gray-900">Create User</h3>
+                <button id="modal-close" class="text-gray-500 hover:text-gray-800">Close</button>
+            </div>
+            <div id="modal-status" class="text-sm mb-3"></div>
+
+            <div id="modal-employee-select" class="mb-4">
+                <label class="text-sm font-semibold text-gray-700">Employee lookup</label>
+                <input id="modal-employee-search" type="text" class="border rounded px-3 py-2 w-full mt-1" placeholder="Type name or employee number">
+                <div id="modal-employee-results" class="border rounded mt-1 max-h-40 overflow-y-auto"></div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4" id="modal-edit-area">
+                <div>
+                    <label class="text-sm font-semibold text-gray-700">Employee ID</label>
+                    <div id="modal-employee-id" class="mt-1 text-sm border rounded px-3 py-2 bg-gray-50">Not selected</div>
+                </div>
+                <div>
+                    <label class="text-sm font-semibold text-gray-700">Role</label>
+                    <select id="modal-role" class="border rounded px-3 py-2 w-full mt-1">
+                        <option value="Admin">Admin</option>
+                        <option value="User">User</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="modal-rights" class="mb-4"></div>
+
+            <div id="modal-code-area" class="mb-4">
+                <label class="text-sm font-semibold text-gray-700">Code</label>
+                <input id="modal-password" type="password" class="border rounded px-3 py-2 w-full mt-1" placeholder="Leave blank to keep/default 1234">
+                <label id="modal-reset-wrap" class="text-xs mt-2 inline-flex items-center"><input id="modal-reset" type="checkbox" class="mr-1"> reset to 1234</label>
+            </div>
+
+            <div class="flex justify-end gap-2">
+                <button id="modal-cancel" class="px-3 py-2 border rounded hover:bg-gray-50">Cancel</button>
+                <button id="modal-delete" class="hidden px-3 py-2 bg-red-700 text-white rounded hover:bg-red-600">Delete</button>
+                <button id="modal-save" class="px-3 py-2 bg-gray-800 text-white rounded hover:bg-gray-700">Save</button>
+            </div>
+        </div>
+    </div>
+
     <script src="app-config.js"></script>
     <script src="api-simulation.js"></script>
     <script src="main.js"></script>
@@ -62,94 +105,304 @@
         const statusEl = document.getElementById('status');
         const rowsEl = document.getElementById('user-rows');
 
+        const modalEl = document.getElementById('user-modal');
+        const modalStatusEl = document.getElementById('modal-status');
+        const modalTitleEl = document.getElementById('modal-title');
+        const modalEmployeeSelectEl = document.getElementById('modal-employee-select');
+        const modalEmployeeSearchEl = document.getElementById('modal-employee-search');
+        const modalEmployeeResultsEl = document.getElementById('modal-employee-results');
+        const modalEmployeeIdEl = document.getElementById('modal-employee-id');
+        const modalRoleEl = document.getElementById('modal-role');
+        const modalRightsEl = document.getElementById('modal-rights');
+        const modalPasswordEl = document.getElementById('modal-password');
+        const modalResetWrapEl = document.getElementById('modal-reset-wrap');
+        const modalResetEl = document.getElementById('modal-reset');
+        const modalCodeAreaEl = document.getElementById('modal-code-area');
+        const modalDeleteBtn = document.getElementById('modal-delete');
+        const modalSaveBtn = document.getElementById('modal-save');
+
+        let atlasUsers = [];
+        let employees = [];
+        let modalMode = 'create';
+        let selectedEmployee = null;
+        let currentAdminUser = null;
+
         function setStatus(message, isError = false) {
             statusEl.textContent = message || '';
             statusEl.className = isError ? 'text-sm mb-3 text-red-700' : 'text-sm mb-3 text-green-700';
         }
 
-        function rightsEditor(user) {
-            const rights = user.rights || {};
+        function setModalStatus(message, isError = false) {
+            modalStatusEl.textContent = message || '';
+            modalStatusEl.className = isError ? 'text-sm mb-3 text-red-700' : 'text-sm mb-3 text-green-700';
+        }
+
+        function rightsEditor(rights) {
+            const current = rights || {};
             const keys = ['checkout', 'manageRentals', 'manageWarehouse', 'manageEquipment', 'manageUsers'];
             return keys.map((key) => `
-                <label class="inline-flex items-center mr-3">
-                    <input type="checkbox" data-right-key="${key}" ${rights[key] ? 'checked' : ''}>
-                    <span class="ml-1">${key}</span>
+                <label class="inline-flex items-center mr-3 mb-1">
+                    <input type="checkbox" data-right-key="${key}" ${current[key] ? 'checked' : ''}>
+                    <span class="ml-1 text-sm">${key}</span>
                 </label>
             `).join('');
         }
 
-        function renderUsers(users) {
+        function summarizeRights(user) {
+            const rights = user.rights || {};
+            const enabled = Object.keys(rights).filter((key) => rights[key]);
+            return `${user.role || 'User'}: ${enabled.join(', ') || 'none'}`;
+        }
+
+        function renderTable() {
             rowsEl.innerHTML = '';
-            (users || []).forEach((user) => {
+            const provisioned = (atlasUsers || []).filter((u) => u.isProvisioned);
+            provisioned.forEach((user) => {
                 const tr = document.createElement('tr');
                 tr.className = 'border-b';
                 tr.innerHTML = `
                     <td class="p-2 border">
-                        <div class="font-medium">${user.displayName || user.name}</div>
-                        <div class="text-xs text-gray-500">#${user.employeeID}</div>
+                        <div class="font-semibold">${user.employeeID}</div>
+                        <div class="text-xs text-gray-500">${user.displayName || user.name || ''}</div>
                     </td>
+                    <td class="p-2 border">${summarizeRights(user)}</td>
+                    <td class="p-2 border">${user.hasCustomPassword ? 'Custom code set' : 'Default 1234'}</td>
                     <td class="p-2 border">
-                        <select class="border rounded px-2 py-1" data-role>
-                            <option value="Admin" ${user.role === 'Admin' ? 'selected' : ''}>Admin</option>
-                            <option value="User" ${user.role === 'User' ? 'selected' : ''}>User</option>
-                        </select>
-                    </td>
-                    <td class="p-2 border">${rightsEditor(user)}</td>
-                    <td class="p-2 border">
-                        <input type="password" class="border rounded px-2 py-1 w-32" placeholder="${user.hasCustomPassword ? 'Set new code' : 'Default 1234'}" data-password>
-                        <label class="ml-2 text-xs"><input type="checkbox" data-reset> reset to 1234</label>
-                    </td>
-                    <td class="p-2 border">
-                        <button class="px-3 py-1 bg-gray-800 text-white rounded" data-save>Save</button>
+                        <button class="px-3 py-1 bg-gray-800 text-white rounded mr-2" data-edit>Edit</button>
+                        <button class="px-3 py-1 bg-red-700 text-white rounded" data-delete>Delete</button>
                     </td>
                 `;
-
-                tr.querySelector('[data-save]').addEventListener('click', async () => {
-                    const role = tr.querySelector('[data-role]').value;
-                    const rights = {};
-                    tr.querySelectorAll('input[data-right-key]').forEach((el) => {
-                        rights[el.dataset.rightKey] = !!el.checked;
-                    });
-                    const password = (tr.querySelector('input[data-password]').value || '').trim();
-                    const resetPassword = !!tr.querySelector('input[data-reset]').checked;
-
-                    try {
-                        await window.sqlAPI.updateAdminUser(user.employeeID, {
-                            role,
-                            rights,
-                            password: password || null,
-                            resetPassword
-                        });
-                        setStatus(`Saved user #${user.employeeID}.`);
-                        await loadUsers();
-                    } catch (error) {
-                        setStatus(`Failed saving user #${user.employeeID}: ${error.message}`, true);
-                    }
-                });
-
+                tr.querySelector('[data-edit]').addEventListener('click', () => openModal('edit', user));
+                tr.querySelector('[data-delete]').addEventListener('click', () => openModal('delete', user));
                 rowsEl.appendChild(tr);
             });
         }
 
+        function renderEmployeeLookup(query) {
+            const term = String(query || '').trim().toLowerCase();
+            modalEmployeeResultsEl.innerHTML = '';
+            const matches = employees
+                .filter((e) => {
+                    const text = `${e.displayName || ''} ${e.name || ''} ${e.employeeNumber || ''} ${e.employeeID || ''}`.toLowerCase();
+                    return !term || text.includes(term);
+                })
+                .slice(0, 50);
+
+            if (!matches.length) {
+                modalEmployeeResultsEl.innerHTML = '<div class="p-2 text-xs text-gray-500">No matching employee</div>';
+                return;
+            }
+
+            matches.forEach((employee) => {
+                const row = document.createElement('button');
+                row.type = 'button';
+                row.className = 'block w-full text-left p-2 text-sm hover:bg-gray-50 border-b';
+                row.textContent = `${employee.displayName || employee.name || employee.employeeID} (#${employee.employeeID})`;
+                row.addEventListener('click', () => {
+                    selectedEmployee = employee;
+                    modalEmployeeIdEl.textContent = String(employee.employeeID);
+                    modalEmployeeSearchEl.value = `${employee.displayName || employee.name || employee.employeeID}`;
+                    modalEmployeeResultsEl.innerHTML = '';
+                });
+                modalEmployeeResultsEl.appendChild(row);
+            });
+        }
+
+        async function ensureEmployeeLookupData() {
+            if (!currentAdminUser || currentAdminUser.role !== 'Admin') {
+                setModalStatus('Admin login required. Please sign in again.', true);
+                return false;
+            }
+            if (Array.isArray(employees) && employees.length) {
+                return true;
+            }
+            try {
+                const freshEmployees = await window.sqlAPI.getEmployees(false, true);
+                if (Array.isArray(freshEmployees) && freshEmployees.length) {
+                    employees = freshEmployees;
+                    return true;
+                }
+            } catch (error) {
+                setModalStatus(`Employee directory unavailable: ${error.message}`, true);
+            }
+            // Fallback to visible admin users if employee API is unavailable.
+            const fallback = (atlasUsers || []).map((u) => ({
+                employeeID: u.employeeID,
+                employeeNumber: u.employeeNumber || String(u.employeeID),
+                displayName: u.displayName || u.name || `Employee #${u.employeeID}`,
+                name: u.name || '',
+            }));
+            employees = fallback;
+            if (!employees.length) {
+                setModalStatus('No employee directory data available right now.', true);
+                return false;
+            }
+            setModalStatus('Employee API unavailable. Using cached user list fallback.');
+            return true;
+        }
+
+        function openModal(mode, user = null) {
+            modalMode = mode;
+            setModalStatus('');
+            modalPasswordEl.value = '';
+            modalResetEl.checked = false;
+            selectedEmployee = null;
+
+            if (mode === 'create') {
+                modalTitleEl.textContent = 'Create User';
+                modalEmployeeSelectEl.classList.remove('hidden');
+                modalCodeAreaEl.classList.remove('hidden');
+                modalResetWrapEl.classList.add('hidden');
+                modalDeleteBtn.classList.add('hidden');
+                modalSaveBtn.classList.remove('hidden');
+                modalSaveBtn.textContent = 'Save';
+                modalRoleEl.value = 'User';
+                modalRightsEl.innerHTML = rightsEditor({
+                    checkout: true,
+                    manageRentals: false,
+                    manageWarehouse: false,
+                    manageEquipment: false,
+                    manageUsers: false,
+                });
+                modalEmployeeIdEl.textContent = 'Not selected';
+                modalEmployeeSearchEl.value = '';
+                renderEmployeeLookup('');
+                ensureEmployeeLookupData().then((ok) => {
+                    if (ok) renderEmployeeLookup('');
+                });
+            }
+
+            if (mode === 'edit' && user) {
+                modalTitleEl.textContent = `Edit User #${user.employeeID}`;
+                modalEmployeeSelectEl.classList.add('hidden');
+                modalCodeAreaEl.classList.remove('hidden');
+                modalResetWrapEl.classList.remove('hidden');
+                modalDeleteBtn.classList.add('hidden');
+                modalSaveBtn.classList.remove('hidden');
+                modalSaveBtn.textContent = 'Save';
+                selectedEmployee = user;
+                modalEmployeeIdEl.textContent = String(user.employeeID);
+                modalRoleEl.value = user.role || 'User';
+                modalRightsEl.innerHTML = rightsEditor(user.rights || {});
+            }
+
+            if (mode === 'delete' && user) {
+                modalTitleEl.textContent = `Delete User #${user.employeeID}`;
+                modalEmployeeSelectEl.classList.add('hidden');
+                modalCodeAreaEl.classList.add('hidden');
+                modalDeleteBtn.classList.remove('hidden');
+                modalSaveBtn.classList.add('hidden');
+                selectedEmployee = user;
+                modalEmployeeIdEl.textContent = String(user.employeeID);
+                modalRoleEl.value = user.role || 'User';
+                modalRightsEl.innerHTML = `<div class="text-sm text-red-700">Confirm delete user #${user.employeeID} (${user.displayName || user.name || ''}).</div>`;
+            }
+
+            modalEl.classList.remove('hidden');
+        }
+
+        function closeModal() {
+            modalEl.classList.add('hidden');
+        }
+
+        function collectModalPayload() {
+            const role = modalRoleEl.value;
+            const rights = {};
+            modalRightsEl.querySelectorAll('input[data-right-key]').forEach((el) => {
+                rights[el.dataset.rightKey] = !!el.checked;
+            });
+            const password = (modalPasswordEl.value || '').trim();
+            const resetPassword = !!modalResetEl.checked;
+            return {
+                role,
+                rights,
+                password: password || null,
+                resetPassword,
+            };
+        }
+
         async function loadUsers(forceRefresh = false) {
             try {
-                const current = await window.sqlAPI.getCurrentUser();
+                const current = await window.sqlAPI.getCurrentUser(forceRefresh);
                 if (!current || current.role !== 'Admin') {
-                    setStatus('Admin login required.', true);
+                    currentAdminUser = null;
+                    setStatus('Admin login required. Please sign in again.', true);
                     rowsEl.innerHTML = '';
                     return;
                 }
-                const users = await window.sqlAPI.getAdminUsers(forceRefresh);
-                renderUsers(users);
-                setStatus(`Loaded ${users.length} users.`);
+                currentAdminUser = current;
+                const users = await window.sqlAPI.getAdminUsers(false);
+                const employeeList = await window.sqlAPI.getEmployees(false).catch(() => []);
+                atlasUsers = users || [];
+                employees = employeeList || [];
+                renderTable();
+                setStatus(`Loaded ${atlasUsers.filter((u) => u.isProvisioned).length} provisioned users.`);
             } catch (error) {
+                currentAdminUser = null;
                 setStatus(`Failed to load users: ${error.message}`, true);
                 rowsEl.innerHTML = '';
             }
         }
 
-        document.getElementById('refresh-users').addEventListener('click', () => loadUsers(true));
-        loadUsers();
+        window.addEventListener('asset-auth-changed', () => {
+            loadUsers(true);
+        });
+
+        document.getElementById('open-create-modal').addEventListener('click', () => openModal('create'));
+        document.getElementById('modal-close').addEventListener('click', closeModal);
+        document.getElementById('modal-cancel').addEventListener('click', closeModal);
+
+        modalEmployeeSearchEl.addEventListener('input', () => {
+            renderEmployeeLookup(modalEmployeeSearchEl.value || '');
+        });
+
+        modalSaveBtn.addEventListener('click', async () => {
+            try {
+                if (modalMode === 'create') {
+                    if (!selectedEmployee || !selectedEmployee.employeeID) {
+                        setModalStatus('Select an employee first.', true);
+                        return;
+                    }
+                    const payload = collectModalPayload();
+                    await window.sqlAPI.createAdminUser({
+                        employeeID: selectedEmployee.employeeID,
+                        role: payload.role,
+                        rights: payload.rights,
+                        password: payload.password,
+                    });
+                    setStatus(`Created user #${selectedEmployee.employeeID}.`);
+                } else if (modalMode === 'edit') {
+                    if (!selectedEmployee || !selectedEmployee.employeeID) {
+                        setModalStatus('Missing selected user.', true);
+                        return;
+                    }
+                    const payload = collectModalPayload();
+                    await window.sqlAPI.updateAdminUser(selectedEmployee.employeeID, payload);
+                    setStatus(`Updated user #${selectedEmployee.employeeID}.`);
+                }
+                closeModal();
+                await loadUsers();
+            } catch (error) {
+                setModalStatus(error.message || 'Save failed.', true);
+            }
+        });
+
+        modalDeleteBtn.addEventListener('click', async () => {
+            try {
+                if (!selectedEmployee || !selectedEmployee.employeeID) {
+                    setModalStatus('Missing selected user.', true);
+                    return;
+                }
+                await window.sqlAPI.deleteAdminUser(selectedEmployee.employeeID);
+                closeModal();
+                setStatus(`Deleted user #${selectedEmployee.employeeID}.`);
+                await loadUsers();
+            } catch (error) {
+                setModalStatus(error.message || 'Delete failed.', true);
+            }
+        });
+
+        loadUsers(true);
     </script>
 </body>
 </html>

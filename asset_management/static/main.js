@@ -7,6 +7,12 @@ class EquipmentManager {
         this.init();
     }
 
+    notifyAuthChanged() {
+        window.dispatchEvent(new CustomEvent('asset-auth-changed', {
+            detail: { user: this.currentUser || null }
+        }));
+    }
+
     async init() {
         // Wait for the SQL API adapter to be ready
         let attempts = 0;
@@ -46,6 +52,7 @@ class EquipmentManager {
         if (window.sqlAPI) {
             this.currentUser = await window.sqlAPI.getCurrentUser();
             this.updateUserInterface();
+            this.notifyAuthChanged();
         }
     }
 
@@ -78,6 +85,7 @@ class EquipmentManager {
                 await window.sqlAPI.logout();
                 this.currentUser = null;
                 this.updateUserInterface();
+                this.notifyAuthChanged();
                 await this.showLoginModal();
             });
         });
@@ -125,11 +133,10 @@ class EquipmentManager {
                 <p style="margin:0 0 16px 0;color:#4b5563;font-size:0.9rem;">Find your name and enter your code.</p>
                 <div style="display:grid;gap:12px;">
                     <label style="font-size:0.8rem;font-weight:600;color:#374151;">Name</label>
-                    <input id="global-login-search" type="text" style="border:1px solid #d1d5db;border-radius:8px;padding:10px;" placeholder="Type name or employee number">
-                    <div id="global-login-selected" style="font-size:0.8rem;color:#1f2937;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px;">Selected: none</div>
-                    <div id="global-login-results" style="border:1px solid #e5e7eb;border-radius:8px;max-height:190px;overflow-y:auto;"></div>
-                    <div style="font-size:0.75rem;color:#4b5563;">
-                        Local admin is always available: <code>admin</code> / <code>admin1234</code>.
+                    <div id="global-login-combobox" style="position:relative;">
+                        <input id="global-login-search" type="text" autocomplete="off" style="width:100%;border:1px solid #d1d5db;border-radius:8px;padding:10px 38px 10px 10px;" placeholder="Select or type name">
+                        <button id="global-login-toggle" type="button" aria-label="Show names" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;width:28px;height:28px;border-radius:6px;cursor:pointer;color:#4b5563;font-size:0.9rem;">&#9662;</button>
+                        <div id="global-login-dropdown" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;border:1px solid #e5e7eb;border-radius:8px;max-height:190px;overflow-y:auto;background:#fff;box-shadow:0 8px 18px rgba(0,0,0,0.1);z-index:20;"></div>
                     </div>
                     <label style="font-size:0.8rem;font-weight:600;color:#374151;">Code</label>
                     <input id="global-login-code" type="password" style="border:1px solid #d1d5db;border-radius:8px;padding:10px;" placeholder="Enter code">
@@ -141,8 +148,9 @@ class EquipmentManager {
         document.body.appendChild(modal);
 
         const searchInput = document.getElementById('global-login-search');
-        const selectedEl = document.getElementById('global-login-selected');
-        const resultsEl = document.getElementById('global-login-results');
+        const comboboxEl = document.getElementById('global-login-combobox');
+        const toggleBtn = document.getElementById('global-login-toggle');
+        const dropdownEl = document.getElementById('global-login-dropdown');
         const codeInput = document.getElementById('global-login-code');
         const submitBtn = document.getElementById('global-login-submit');
         const errorEl = document.getElementById('global-login-error');
@@ -165,35 +173,49 @@ class EquipmentManager {
             }))
         ];
         let selectedUser = null;
+        let filteredUsers = [];
+        let isDropdownOpen = false;
 
-        const setSelectedUser = (user) => {
-            selectedUser = user;
-            if (!selectedUser) {
-                selectedEl.textContent = 'Selected: none';
-                return;
-            }
-            const number = selectedUser.employeeNumber || selectedUser.employeeID || '';
-            selectedEl.textContent = selectedUser.kind === 'admin'
-                ? `Selected: ${selectedUser.displayName}`
-                : `Selected: ${selectedUser.displayName} (#${number})`;
+        const getUserLabel = (user) => {
+            if (!user) return '';
+            return user.kind === 'admin'
+                ? user.displayName
+                : `${user.displayName} (#${user.employeeNumber || user.employeeID})`;
         };
 
-        const renderResults = (query) => {
+        const hideDropdown = () => {
+            dropdownEl.style.display = 'none';
+            isDropdownOpen = false;
+        };
+
+        const showDropdown = () => {
+            dropdownEl.style.display = 'block';
+            isDropdownOpen = true;
+        };
+
+        const setSelectedUser = (user, { updateInput = true } = {}) => {
+            selectedUser = user;
+            if (updateInput) {
+                searchInput.value = getUserLabel(selectedUser);
+            }
+        };
+
+        const renderDropdown = (query) => {
             const term = String(query || '').trim().toLowerCase();
-            const filtered = allUsers
+            filteredUsers = allUsers
                 .filter((user) => !term || user.searchText.includes(term))
                 .slice(0, 50);
-            resultsEl.innerHTML = '';
-            if (!filtered.length) {
+            dropdownEl.innerHTML = '';
+            if (!filteredUsers.length) {
                 const empty = document.createElement('div');
                 empty.style.padding = '8px';
                 empty.style.fontSize = '0.8rem';
                 empty.style.color = '#6b7280';
                 empty.textContent = 'No matching users';
-                resultsEl.appendChild(empty);
+                dropdownEl.appendChild(empty);
                 return;
             }
-            filtered.forEach((user) => {
+            filteredUsers.forEach((user) => {
                 const row = document.createElement('button');
                 row.type = 'button';
                 row.style.display = 'block';
@@ -205,36 +227,59 @@ class EquipmentManager {
                 row.style.borderBottom = '1px solid #f3f4f6';
                 row.style.background = '#fff';
                 row.style.cursor = 'pointer';
-                row.textContent = user.kind === 'admin'
-                    ? user.displayName
-                    : `${user.displayName} (#${user.employeeNumber || user.employeeID})`;
-                row.addEventListener('click', () => setSelectedUser(user));
+                row.textContent = getUserLabel(user);
+                row.addEventListener('mousedown', (event) => event.preventDefault());
+                row.addEventListener('click', () => {
+                    setSelectedUser(user);
+                    hideDropdown();
+                });
                 row.addEventListener('mouseenter', () => { row.style.background = '#f9fafb'; });
                 row.addEventListener('mouseleave', () => { row.style.background = '#fff'; });
-                resultsEl.appendChild(row);
+                dropdownEl.appendChild(row);
             });
         };
 
-        renderResults('');
-        const defaultUser = allUsers.find((item) => item.kind === 'employee') || allUsers[0] || null;
-        setSelectedUser(defaultUser);
+        const clearSelectedWhenInputChanges = () => {
+            if (!selectedUser) return;
+            if (searchInput.value.trim() !== getUserLabel(selectedUser)) {
+                setSelectedUser(null, { updateInput: false });
+            }
+        };
+
+        const tryResolveTypedSelection = () => {
+            if (selectedUser) return selectedUser;
+            const term = String(searchInput.value || '').trim().toLowerCase();
+            if (!term) return null;
+            const matches = allUsers.filter((user) => {
+                const display = (user.displayName || '').toLowerCase();
+                const number = String(user.employeeNumber || user.employeeID || '').toLowerCase();
+                return display === term || number === term || getUserLabel(user).toLowerCase() === term;
+            });
+            if (matches.length === 1) {
+                setSelectedUser(matches[0], { updateInput: false });
+                return matches[0];
+            }
+            return null;
+        };
 
         const submit = async () => {
             const pinCode = (codeInput.value || '').trim();
             errorEl.style.display = 'none';
-            if (!selectedUser || pinCode.length < 4) {
-                errorEl.textContent = 'Select user and enter valid code.';
+            const resolvedUser = tryResolveTypedSelection();
+            if (!resolvedUser || pinCode.length < 4) {
+                errorEl.textContent = 'Select your name and enter a valid code.';
                 errorEl.style.display = 'block';
                 return;
             }
             submitBtn.disabled = true;
             try {
-                if (selectedUser.kind === 'admin') {
+                if (resolvedUser.kind === 'admin') {
                     this.currentUser = await window.sqlAPI.loginAdmin('admin', pinCode);
                 } else {
-                    this.currentUser = await window.sqlAPI.loginEmployee(selectedUser.employeeID, pinCode);
+                    this.currentUser = await window.sqlAPI.loginEmployee(resolvedUser.employeeID, pinCode);
                 }
                 this.updateUserInterface();
+                this.notifyAuthChanged();
                 modal.remove();
             } catch (error) {
                 errorEl.textContent = 'Login failed. Check your code.';
@@ -246,10 +291,39 @@ class EquipmentManager {
 
         submitBtn.addEventListener('click', submit);
         searchInput.addEventListener('input', () => {
-            renderResults(searchInput.value || '');
+            clearSelectedWhenInputChanges();
+            renderDropdown(searchInput.value || '');
+            showDropdown();
         });
         searchInput.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                renderDropdown(searchInput.value || '');
+                showDropdown();
+                return;
+            }
+            if (event.key === 'Escape') {
+                hideDropdown();
+                return;
+            }
             if (event.key === 'Enter') submit();
+        });
+        searchInput.addEventListener('focus', () => {
+            errorEl.style.display = 'none';
+        });
+        toggleBtn.addEventListener('click', () => {
+            if (isDropdownOpen) {
+                hideDropdown();
+                return;
+            }
+            renderDropdown(searchInput.value || '');
+            showDropdown();
+            searchInput.focus();
+        });
+        modal.addEventListener('click', (event) => {
+            if (!comboboxEl.contains(event.target)) {
+                hideDropdown();
+            }
         });
         codeInput.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') submit();

@@ -3,12 +3,16 @@ import uuid
 import base64
 import binascii
 import json
+import logging
+import threading
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, selectinload
 
@@ -42,16 +46,17 @@ from services.equipment_service import (
     serialize_instance,
     serialize_tool,
 )
-from services.employee_directory_service import EmployeeDirectoryError, get_employee_directory, get_employees_list
-from services.user_access_service import (
-    create_session,
-    get_session,
+from services.employee_directory_service import EmployeeDirectoryError, get_directory_status, get_employee_directory, get_employees_list
+from services.atlas_user_service import (
+    create_user_record,
+    delete_user_record,
     get_user_record,
+    list_provisioned_users,
     list_user_records,
-    remove_session,
     update_user_record,
     verify_password,
 )
+from services.user_access_service import create_session, get_session, remove_session
 from services.rental_service import (
     apply_return_updates,
     generate_offer_number,
@@ -91,7 +96,7 @@ STATE_TRANSITIONS = {
     "Closed": set(),
 }
 LOCAL_ADMIN_USERNAME = "admin"
-LOCAL_ADMIN_PASSWORD = "admin1234"
+LOCAL_ADMIN_PASSWORD = (os.environ.get("LOCAL_ADMIN_PASSWORD") or "").strip()
 LOCAL_ADMIN_EMPLOYEE_ID = 999999
 LOCAL_ADMIN_RIGHTS = {
     "manageUsers": True,
@@ -100,6 +105,24 @@ LOCAL_ADMIN_RIGHTS = {
     "manageEquipment": True,
     "checkout": True,
 }
+AUTH_ATTEMPT_WINDOW_SECONDS = int(os.environ.get("AUTH_ATTEMPT_WINDOW_SECONDS") or "300")
+AUTH_MAX_ATTEMPTS_PER_IP = int(os.environ.get("AUTH_MAX_ATTEMPTS_PER_IP") or "50")
+AUTH_MAX_ATTEMPTS_PER_ACCOUNT = int(os.environ.get("AUTH_MAX_ATTEMPTS_PER_ACCOUNT") or "8")
+AUTH_LOCKOUT_SECONDS = int(os.environ.get("AUTH_LOCKOUT_SECONDS") or "900")
+AUTH_LOGGER = logging.getLogger("asset_management.auth")
+_AUTH_GUARD_LOCK = threading.Lock()
+_AUTH_ATTEMPTS_BY_IP: dict[str, list[float]] = {}
+_AUTH_ATTEMPTS_BY_ACCOUNT: dict[str, list[float]] = {}
+_AUTH_LOCKOUT_UNTIL_BY_ACCOUNT: dict[str, float] = {}
+
+
+class AuthLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str | None = None
+    password: str | None = None
+    employeeID: int | str | None = None
+    pinCode: str | None = None
 
 def log_audit(db: Session, entity_type: str, entity_id: int, action: str, details: str | None = None, user_id: int | None = None) -> None:
     db.add(
@@ -112,6 +135,75 @@ def log_audit(db: Session, entity_type: str, entity_id: int, action: str, detail
             CreatedAt=datetime.now(),
         )
     )
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        candidate = forwarded.split(",")[0].strip()
+        if candidate:
+            return candidate
+    return request.client.host if request.client and request.client.host else "unknown"
+
+
+def _prune_attempts(attempts: list[float], now_ts: float) -> list[float]:
+    cutoff = now_ts - max(AUTH_ATTEMPT_WINDOW_SECONDS, 1)
+    return [ts for ts in attempts if ts >= cutoff]
+
+
+def _check_login_guard(client_ip: str, account_key: str) -> int | None:
+    now_ts = time.time()
+    with _AUTH_GUARD_LOCK:
+        lockout_until = _AUTH_LOCKOUT_UNTIL_BY_ACCOUNT.get(account_key)
+        if lockout_until and lockout_until > now_ts:
+            return max(1, int(lockout_until - now_ts))
+        if lockout_until and lockout_until <= now_ts:
+            _AUTH_LOCKOUT_UNTIL_BY_ACCOUNT.pop(account_key, None)
+
+        ip_attempts = _prune_attempts(_AUTH_ATTEMPTS_BY_IP.get(client_ip, []), now_ts)
+        account_attempts = _prune_attempts(_AUTH_ATTEMPTS_BY_ACCOUNT.get(account_key, []), now_ts)
+        _AUTH_ATTEMPTS_BY_IP[client_ip] = ip_attempts
+        _AUTH_ATTEMPTS_BY_ACCOUNT[account_key] = account_attempts
+
+        if len(ip_attempts) >= max(AUTH_MAX_ATTEMPTS_PER_IP, 1):
+            oldest = ip_attempts[0]
+            retry_after = max(1, int((oldest + AUTH_ATTEMPT_WINDOW_SECONDS) - now_ts))
+            return retry_after
+        if len(account_attempts) >= max(AUTH_MAX_ATTEMPTS_PER_ACCOUNT, 1):
+            _AUTH_LOCKOUT_UNTIL_BY_ACCOUNT[account_key] = now_ts + max(AUTH_LOCKOUT_SECONDS, 1)
+            return max(AUTH_LOCKOUT_SECONDS, 1)
+    return None
+
+
+def _record_login_failure(client_ip: str, account_key: str) -> None:
+    now_ts = time.time()
+    with _AUTH_GUARD_LOCK:
+        ip_attempts = _prune_attempts(_AUTH_ATTEMPTS_BY_IP.get(client_ip, []), now_ts)
+        account_attempts = _prune_attempts(_AUTH_ATTEMPTS_BY_ACCOUNT.get(account_key, []), now_ts)
+        ip_attempts.append(now_ts)
+        account_attempts.append(now_ts)
+        _AUTH_ATTEMPTS_BY_IP[client_ip] = ip_attempts
+        _AUTH_ATTEMPTS_BY_ACCOUNT[account_key] = account_attempts
+        if len(account_attempts) >= max(AUTH_MAX_ATTEMPTS_PER_ACCOUNT, 1):
+            _AUTH_LOCKOUT_UNTIL_BY_ACCOUNT[account_key] = now_ts + max(AUTH_LOCKOUT_SECONDS, 1)
+
+
+def _record_login_success(account_key: str) -> None:
+    with _AUTH_GUARD_LOCK:
+        _AUTH_ATTEMPTS_BY_ACCOUNT.pop(account_key, None)
+        _AUTH_LOCKOUT_UNTIL_BY_ACCOUNT.pop(account_key, None)
+
+
+def _audit_auth_event(db: Session, *, action: str, details: str, user_id: int | None = None) -> None:
+    try:
+        log_audit(db, "Auth", int(user_id or 0), action, details, user_id=user_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def _invalid_login_error() -> HTTPException:
+    return HTTPException(status_code=401, detail="Invalid credentials.")
 
 @app.get("/healthz")
 def healthcheck():
@@ -132,8 +224,11 @@ def get_employees(force_refresh: bool = Query(False, alias="forceRefresh")):
     try:
         rows = get_employees_list(force_refresh=force_refresh)
     except EmployeeDirectoryError as exc:
-        # Fail-open for UI login when employee API/env is temporarily unavailable.
-        return []
+        status = get_directory_status()
+        raise HTTPException(
+            status_code=503,
+            detail=f"Employee directory unavailable: {exc}. cacheCount={status['cacheCount']} cacheExpiresInSeconds={status['cacheExpiresInSeconds']}",
+        ) from exc
     return [
         {
             "employeeID": int(row["normalizedNumber"]),
@@ -146,6 +241,11 @@ def get_employees(force_refresh: bool = Query(False, alias="forceRefresh")):
         }
         for row in rows
     ]
+
+
+@app.get("/api/employees/status")
+def get_employees_status():
+    return get_directory_status()
 
 
 @app.get("/api/projects/search")
@@ -177,13 +277,50 @@ def search_projects(
 
 
 @app.post("/api/auth/login")
-def auth_login(payload: dict):
-    username = str(payload.get("username") or "").strip().lower()
-    password = str(payload.get("password") or payload.get("pinCode") or "")
+def auth_login(payload: dict, request: Request, db: Session = Depends(get_asset_db)):
+    client_ip = _get_client_ip(request)
+    try:
+        parsed = AuthLoginRequest.model_validate(payload)
+    except ValidationError:
+        _audit_auth_event(db, action="LoginRejected", details=f"ip={client_ip} reason=invalid_payload", user_id=None)
+        raise HTTPException(status_code=400, detail="Invalid login request.")
 
-    if username == LOCAL_ADMIN_USERNAME:
+    username = str(parsed.username or "").strip().lower()
+    password = str(parsed.password or parsed.pinCode or "")
+    raw_employee_id = parsed.employeeID
+
+    if not username and raw_employee_id in (None, ""):
+        _audit_auth_event(db, action="LoginRejected", details=f"ip={client_ip} reason=missing_identity", user_id=None)
+        raise HTTPException(status_code=400, detail="Invalid login request.")
+
+    account_key: str
+    if username:
+        account_key = f"user:{username}"
+    else:
+        account_key = f"employee:{str(raw_employee_id).strip()}"
+
+    retry_after = _check_login_guard(client_ip, account_key)
+    if retry_after is not None:
+        _audit_auth_event(db, action="LoginThrottled", details=f"ip={client_ip} key={account_key} retry_after={retry_after}", user_id=None)
+        AUTH_LOGGER.warning("Login throttled ip=%s key=%s retry_after=%s", client_ip, account_key, retry_after)
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Please try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    if username:
+        if username != LOCAL_ADMIN_USERNAME or not LOCAL_ADMIN_PASSWORD:
+            _record_login_failure(client_ip, account_key)
+            _audit_auth_event(db, action="LoginFailed", details=f"ip={client_ip} key={account_key} reason=invalid_admin_identity", user_id=None)
+            AUTH_LOGGER.warning("Login failed ip=%s key=%s reason=invalid_admin_identity", client_ip, account_key)
+            raise _invalid_login_error()
         if password != LOCAL_ADMIN_PASSWORD:
-            raise HTTPException(status_code=401, detail="Invalid login code.")
+            _record_login_failure(client_ip, account_key)
+            _audit_auth_event(db, action="LoginFailed", details=f"ip={client_ip} key={account_key} reason=invalid_admin_password", user_id=None)
+            AUTH_LOGGER.warning("Login failed ip=%s key=%s reason=invalid_admin_password", client_ip, account_key)
+            raise _invalid_login_error()
+
         session_payload = {
             "employeeID": LOCAL_ADMIN_EMPLOYEE_ID,
             "displayName": "Administrator",
@@ -194,15 +331,40 @@ def auth_login(payload: dict):
             "isLocalAdmin": True,
         }
         token = create_session(session_payload)
+        _record_login_success(account_key)
+        _audit_auth_event(db, action="LoginSuccess", details=f"ip={client_ip} key={account_key} method=admin", user_id=LOCAL_ADMIN_EMPLOYEE_ID)
+        AUTH_LOGGER.info("Login success ip=%s key=%s user_id=%s", client_ip, account_key, LOCAL_ADMIN_EMPLOYEE_ID)
         return {"sessionToken": token, "user": session_payload}
 
-    employee_id = _resolve_employee_number_or_400(payload.get("employeeID") or 0)
-    pin_code = str(payload.get("pinCode") or payload.get("password") or "")
-    employee_entry = _require_employee_or_400(employee_id)
-    if not verify_password(employee_id, pin_code):
-        raise HTTPException(status_code=401, detail="Invalid login code.")
+    employee_id: int
+    try:
+        employee_id = _resolve_employee_number_or_400(raw_employee_id or 0)
+    except HTTPException:
+        _record_login_failure(client_ip, account_key)
+        _audit_auth_event(db, action="LoginFailed", details=f"ip={client_ip} key={account_key} reason=invalid_employee_id", user_id=None)
+        AUTH_LOGGER.warning("Login failed ip=%s key=%s reason=invalid_employee_id", client_ip, account_key)
+        raise HTTPException(status_code=400, detail="Invalid login request.")
 
-    access = get_user_record(employee_id)
+    account_key = f"employee:{employee_id}"
+    retry_after = _check_login_guard(client_ip, account_key)
+    if retry_after is not None:
+        _audit_auth_event(db, action="LoginThrottled", details=f"ip={client_ip} key={account_key} retry_after={retry_after}", user_id=employee_id)
+        AUTH_LOGGER.warning("Login throttled ip=%s key=%s retry_after=%s", client_ip, account_key, retry_after)
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Please try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    pin_code = str(parsed.pinCode or parsed.password or "")
+    employee_entry = _require_employee_or_400(employee_id)
+    if not verify_password(db, employee_id, pin_code):
+        _record_login_failure(client_ip, account_key)
+        _audit_auth_event(db, action="LoginFailed", details=f"ip={client_ip} key={account_key} reason=invalid_employee_pin", user_id=employee_id)
+        AUTH_LOGGER.warning("Login failed ip=%s key=%s reason=invalid_employee_pin", client_ip, account_key)
+        raise _invalid_login_error()
+
+    access = get_user_record(db, employee_id)
     session_payload = {
         "employeeID": employee_id,
         "displayName": employee_entry.get("displayName") or employee_entry.get("name") or str(employee_id),
@@ -212,6 +374,9 @@ def auth_login(payload: dict):
         "rights": access.get("rights") or {},
     }
     token = create_session(session_payload)
+    _record_login_success(account_key)
+    _audit_auth_event(db, action="LoginSuccess", details=f"ip={client_ip} key={account_key} method=employee", user_id=employee_id)
+    AUTH_LOGGER.info("Login success ip=%s key=%s user_id=%s", client_ip, account_key, employee_id)
     return {"sessionToken": token, "user": session_payload}
 
 
@@ -230,39 +395,105 @@ def auth_me(x_session_token: str | None = Header(None, alias="X-Session-Token"))
 @app.get("/api/admin/users")
 def list_admin_users(
     force_refresh: bool = Query(False, alias="forceRefresh"),
+    db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
     _require_admin_session_or_403(x_session_token)
     try:
         rows = get_employees_list(force_refresh=force_refresh)
     except EmployeeDirectoryError as exc:
-        raise HTTPException(status_code=503, detail=f"employee_directory_unavailable: {exc}") from exc
-    return list_user_records(rows)
+        return list_provisioned_users(db)
+    return list_user_records(db, rows)
+
+
+@app.post("/api/admin/users")
+def create_admin_user(
+    payload: dict,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    _require_admin_session_or_403(x_session_token)
+    employee_id = _resolve_employee_number_or_400(payload.get("employeeID") or 0)
+    _require_employee_or_400(employee_id)
+    role = payload.get("role")
+    rights = payload.get("rights")
+    timeapp_rights = payload.get("timeAppRights")
+    peopleplanner_rights = payload.get("peoplePlannerRights")
+    password = payload.get("password")
+
+    existing = get_user_record(db, employee_id)
+    try:
+        if existing.get("isProvisioned"):
+            created = update_user_record(
+                db,
+                employee_id=employee_id,
+                role=str(role) if role is not None else None,
+                rights=rights if isinstance(rights, dict) else None,
+                timeapp_rights=timeapp_rights if isinstance(timeapp_rights, dict) else None,
+                peopleplanner_rights=peopleplanner_rights if isinstance(peopleplanner_rights, dict) else None,
+                password=str(password) if password is not None and str(password).strip() else None,
+                reset_password=False,
+            )
+        else:
+            created = create_user_record(
+                db,
+                employee_id=employee_id,
+                role=str(role) if role is not None else None,
+                asset_management_rights=rights if isinstance(rights, dict) else None,
+                timeapp_rights=timeapp_rights if isinstance(timeapp_rights, dict) else {},
+                peopleplanner_rights=peopleplanner_rights if isinstance(peopleplanner_rights, dict) else {},
+                password=str(password) if password is not None and str(password).strip() else None,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return created
 
 
 @app.put("/api/admin/users/{employee_id}")
 def update_admin_user(
     employee_id: int,
     payload: dict,
+    db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
     _require_admin_session_or_403(x_session_token)
     _require_employee_or_400(employee_id)
     role = payload.get("role")
     rights = payload.get("rights")
+    timeapp_rights = payload.get("timeAppRights")
+    peopleplanner_rights = payload.get("peoplePlannerRights")
     password = payload.get("password")
     reset_password = bool(payload.get("resetPassword"))
     try:
         updated = update_user_record(
+            db,
             employee_id=employee_id,
             role=str(role) if role is not None else None,
             rights=rights if isinstance(rights, dict) else None,
+            timeapp_rights=timeapp_rights if isinstance(timeapp_rights, dict) else None,
+            peopleplanner_rights=peopleplanner_rights if isinstance(peopleplanner_rights, dict) else None,
             password=str(password) if password is not None and str(password).strip() else None,
             reset_password=reset_password,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return updated
+
+
+@app.delete("/api/admin/users/{employee_id}")
+def delete_admin_user(
+    employee_id: int,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    _require_admin_session_or_403(x_session_token)
+    try:
+        deleted = delete_user_record(db, employee_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Atlas user not found.")
+    return {"ok": True}
 
 
 @app.get("/api/equipment")

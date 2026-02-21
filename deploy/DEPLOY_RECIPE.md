@@ -2,6 +2,8 @@
 
 Purpose: define one stable PowerShell deployment flow so every code change can be deployed with the same `.ps1` command.
 
+See `BASICS.md` for the canonical quick-start and migration paths.
+
 ## Target Script
 
 Use one script path only:

@@ -1,5 +1,18 @@
 ﻿# TODO
 
+## Immediate Follow-Up (Current Session)
+
+1. Verify Create User lookup on production after latest deploy:
+   - Confirm `/api/employees` returns employee rows (not 503).
+   - Confirm typing in modal filters dropdown list in real time and selecting a row auto-fills Employee ID.
+2. Verify session persistence across navigation:
+   - Login once, navigate between pages, confirm no repeated login prompts or `401 Not logged in`.
+3. Validate employee directory config on server:
+   - Confirm `EMPLOYEE_API_BASE_URL`, `EMPLOYEE_API_TOKEN`, `EMPLOYEE_API_AUTH_HEADER`, `EMPLOYEE_API_AUTH_SCHEME` in service env.
+   - Confirm `/api/employees/status` shows healthy cache/error state.
+4. Clean VS Code Python environments warning:
+   - Re-select interpreter for repo and verify package refresh (`python -m pip list`) no longer errors in extension UI.
+
 ## Independent
 
 1. Audit trail: record who changed status/extended/forced returns with timestamps.
