@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Equipment Management System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <nav class="bg-white shadow sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center">
+                    <h1 class="text-xl font-bold text-gray-800">Equipment Manager</h1>
+                    <div class="ml-10 flex items-baseline space-x-4">
+                        <a href="index.html" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Dashboard</a>
+                        <a href="catalog.html" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Equipment Catalog</a>
+                        <a href="rentals.html" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm">Rentals</a>
+                        <a href="admin.html" class="text-gray-900 font-medium px-3 py-2 rounded-md text-sm">Admin</a>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="text-sm text-gray-600">
+                        <span class="user-full-name">Loading...</span>
+                        <span class="text-xs text-gray-500 user-role"></span>
+                    </div>
+                    <button class="bg-gray-800 text-white px-3 py-1 rounded text-sm hover:bg-gray-700">Logout</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-2xl font-bold text-gray-900">User Control</h2>
+                <button id="refresh-users" class="px-3 py-2 border rounded text-sm hover:bg-gray-50">Refresh</button>
+            </div>
+            <p class="text-sm text-gray-600 mb-4">Manage roles, rights, and login codes. Default code is <strong>1234</strong> until changed.</p>
+            <div id="status" class="text-sm mb-3"></div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-sm border">
+                    <thead class="bg-gray-100">
+                        <tr>
+                            <th class="p-2 border text-left">Employee</th>
+                            <th class="p-2 border text-left">Role</th>
+                            <th class="p-2 border text-left">Rights</th>
+                            <th class="p-2 border text-left">Code</th>
+                            <th class="p-2 border text-left">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="user-rows"></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script src="app-config.js"></script>
+    <script src="api-simulation.js"></script>
+    <script src="main.js"></script>
+    <script>
+        const statusEl = document.getElementById('status');
+        const rowsEl = document.getElementById('user-rows');
+
+        function setStatus(message, isError = false) {
+            statusEl.textContent = message || '';
+            statusEl.className = isError ? 'text-sm mb-3 text-red-700' : 'text-sm mb-3 text-green-700';
+        }
+
+        function rightsEditor(user) {
+            const rights = user.rights || {};
+            const keys = ['checkout', 'manageRentals', 'manageWarehouse', 'manageEquipment', 'manageUsers'];
+            return keys.map((key) => `
+                <label class="inline-flex items-center mr-3">
+                    <input type="checkbox" data-right-key="${key}" ${rights[key] ? 'checked' : ''}>
+                    <span class="ml-1">${key}</span>
+                </label>
+            `).join('');
+        }
+
+        function renderUsers(users) {
+            rowsEl.innerHTML = '';
+            (users || []).forEach((user) => {
+                const tr = document.createElement('tr');
+                tr.className = 'border-b';
+                tr.innerHTML = `
+                    <td class="p-2 border">
+                        <div class="font-medium">${user.displayName || user.name}</div>
+                        <div class="text-xs text-gray-500">#${user.employeeID}</div>
+                    </td>
+                    <td class="p-2 border">
+                        <select class="border rounded px-2 py-1" data-role>
+                            <option value="Admin" ${user.role === 'Admin' ? 'selected' : ''}>Admin</option>
+                            <option value="User" ${user.role === 'User' ? 'selected' : ''}>User</option>
+                        </select>
+                    </td>
+                    <td class="p-2 border">${rightsEditor(user)}</td>
+                    <td class="p-2 border">
+                        <input type="password" class="border rounded px-2 py-1 w-32" placeholder="${user.hasCustomPassword ? 'Set new code' : 'Default 1234'}" data-password>
+                        <label class="ml-2 text-xs"><input type="checkbox" data-reset> reset to 1234</label>
+                    </td>
+                    <td class="p-2 border">
+                        <button class="px-3 py-1 bg-gray-800 text-white rounded" data-save>Save</button>
+                    </td>
+                `;
+
+                tr.querySelector('[data-save]').addEventListener('click', async () => {
+                    const role = tr.querySelector('[data-role]').value;
+                    const rights = {};
+                    tr.querySelectorAll('input[data-right-key]').forEach((el) => {
+                        rights[el.dataset.rightKey] = !!el.checked;
+                    });
+                    const password = (tr.querySelector('input[data-password]').value || '').trim();
+                    const resetPassword = !!tr.querySelector('input[data-reset]').checked;
+
+                    try {
+                        await window.sqlAPI.updateAdminUser(user.employeeID, {
+                            role,
+                            rights,
+                            password: password || null,
+                            resetPassword
+                        });
+                        setStatus(`Saved user #${user.employeeID}.`);
+                        await loadUsers();
+                    } catch (error) {
+                        setStatus(`Failed saving user #${user.employeeID}: ${error.message}`, true);
+                    }
+                });
+
+                rowsEl.appendChild(tr);
+            });
+        }
+
+        async function loadUsers(forceRefresh = false) {
+            try {
+                const current = await window.sqlAPI.getCurrentUser();
+                if (!current || current.role !== 'Admin') {
+                    setStatus('Admin login required.', true);
+                    rowsEl.innerHTML = '';
+                    return;
+                }
+                const users = await window.sqlAPI.getAdminUsers(forceRefresh);
+                renderUsers(users);
+                setStatus(`Loaded ${users.length} users.`);
+            } catch (error) {
+                setStatus(`Failed to load users: ${error.message}`, true);
+                rowsEl.innerHTML = '';
+            }
+        }
+
+        document.getElementById('refresh-users').addEventListener('click', () => loadUsers(true));
+        loadUsers();
+    </script>
+</body>
+</html>

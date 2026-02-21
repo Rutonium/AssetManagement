@@ -6,7 +6,7 @@ import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, text
@@ -41,6 +41,16 @@ from services.equipment_service import (
     generate_next_instance_number,
     serialize_instance,
     serialize_tool,
+)
+from services.employee_directory_service import EmployeeDirectoryError, get_employee_directory, get_employees_list
+from services.user_access_service import (
+    create_session,
+    get_session,
+    get_user_record,
+    list_user_records,
+    remove_session,
+    update_user_record,
+    verify_password,
 )
 from services.rental_service import (
     apply_return_updates,
@@ -80,6 +90,16 @@ STATE_TRANSITIONS = {
     "Returned": {"Closed"},
     "Closed": set(),
 }
+LOCAL_ADMIN_USERNAME = "admin"
+LOCAL_ADMIN_PASSWORD = "admin1234"
+LOCAL_ADMIN_EMPLOYEE_ID = 999999
+LOCAL_ADMIN_RIGHTS = {
+    "manageUsers": True,
+    "manageRentals": True,
+    "manageWarehouse": True,
+    "manageEquipment": True,
+    "checkout": True,
+}
 
 def log_audit(db: Session, entity_type: str, entity_id: int, action: str, details: str | None = None, user_id: int | None = None) -> None:
     db.add(
@@ -105,6 +125,144 @@ def healthcheck_api(db: Session = Depends(get_asset_db)):
         return {"status": "ok"}
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"db_unavailable: {exc}") from exc
+
+
+@app.get("/api/employees")
+def get_employees(force_refresh: bool = Query(False, alias="forceRefresh")):
+    try:
+        rows = get_employees_list(force_refresh=force_refresh)
+    except EmployeeDirectoryError as exc:
+        # Fail-open for UI login when employee API/env is temporarily unavailable.
+        return []
+    return [
+        {
+            "employeeID": int(row["normalizedNumber"]),
+            "employeeNumber": row["number"],
+            "name": row["name"],
+            "initials": row["initials"],
+            "displayName": row["displayName"],
+            "email": row["email"],
+            "departmentCode": row["departmentCode"],
+        }
+        for row in rows
+    ]
+
+
+@app.get("/api/projects/search")
+def search_projects(
+    q: str = Query("", min_length=0, alias="q"),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_asset_db),
+):
+    query = (q or "").strip()
+    stmt = select(Rental.ProjectCode).where(Rental.ProjectCode.is_not(None))
+    if query:
+        stmt = stmt.where(Rental.ProjectCode.ilike(f"%{query}%"))
+    rows = db.execute(stmt.order_by(Rental.ProjectCode.desc()).limit(limit * 3)).all()
+
+    seen: set[str] = set()
+    output: list[dict[str, str]] = []
+    for row in rows:
+        code = str(row[0] or "").strip()
+        if not code:
+            continue
+        key = code.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append({"projectCode": code, "display": code})
+        if len(output) >= limit:
+            break
+    return output
+
+
+@app.post("/api/auth/login")
+def auth_login(payload: dict):
+    username = str(payload.get("username") or "").strip().lower()
+    password = str(payload.get("password") or payload.get("pinCode") or "")
+
+    if username == LOCAL_ADMIN_USERNAME:
+        if password != LOCAL_ADMIN_PASSWORD:
+            raise HTTPException(status_code=401, detail="Invalid login code.")
+        session_payload = {
+            "employeeID": LOCAL_ADMIN_EMPLOYEE_ID,
+            "displayName": "Administrator",
+            "name": "Administrator",
+            "initials": "ADM",
+            "role": "Admin",
+            "rights": dict(LOCAL_ADMIN_RIGHTS),
+            "isLocalAdmin": True,
+        }
+        token = create_session(session_payload)
+        return {"sessionToken": token, "user": session_payload}
+
+    employee_id = _resolve_employee_number_or_400(payload.get("employeeID") or 0)
+    pin_code = str(payload.get("pinCode") or payload.get("password") or "")
+    employee_entry = _require_employee_or_400(employee_id)
+    if not verify_password(employee_id, pin_code):
+        raise HTTPException(status_code=401, detail="Invalid login code.")
+
+    access = get_user_record(employee_id)
+    session_payload = {
+        "employeeID": employee_id,
+        "displayName": employee_entry.get("displayName") or employee_entry.get("name") or str(employee_id),
+        "name": employee_entry.get("name") or "",
+        "initials": employee_entry.get("initials") or "",
+        "role": access.get("role") or "User",
+        "rights": access.get("rights") or {},
+    }
+    token = create_session(session_payload)
+    return {"sessionToken": token, "user": session_payload}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(x_session_token: str | None = Header(None, alias="X-Session-Token")):
+    remove_session(x_session_token)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(x_session_token: str | None = Header(None, alias="X-Session-Token")):
+    session = _require_session_or_401(x_session_token)
+    return {"user": session}
+
+
+@app.get("/api/admin/users")
+def list_admin_users(
+    force_refresh: bool = Query(False, alias="forceRefresh"),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    _require_admin_session_or_403(x_session_token)
+    try:
+        rows = get_employees_list(force_refresh=force_refresh)
+    except EmployeeDirectoryError as exc:
+        raise HTTPException(status_code=503, detail=f"employee_directory_unavailable: {exc}") from exc
+    return list_user_records(rows)
+
+
+@app.put("/api/admin/users/{employee_id}")
+def update_admin_user(
+    employee_id: int,
+    payload: dict,
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    _require_admin_session_or_403(x_session_token)
+    _require_employee_or_400(employee_id)
+    role = payload.get("role")
+    rights = payload.get("rights")
+    password = payload.get("password")
+    reset_password = bool(payload.get("resetPassword"))
+    try:
+        updated = update_user_record(
+            employee_id=employee_id,
+            role=str(role) if role is not None else None,
+            rights=rights if isinstance(rights, dict) else None,
+            password=str(password) if password is not None and str(password).strip() else None,
+            reset_password=reset_password,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return updated
 
 
 @app.get("/api/equipment")
@@ -359,8 +517,9 @@ def get_rentals(db: Session = Depends(get_asset_db)):
     rentals = db.execute(stmt).scalars().all()
     for rental in rentals:
         _apply_runtime_state(rental)
+    employee_directory = _safe_employee_directory()
     db.commit()
-    return [serialize_rental(rental) for rental in rentals]
+    return [_serialize_rental_with_employee(rental, employee_directory) for rental in rentals]
 
 
 @app.get("/api/rentals/{rental_id}")
@@ -375,8 +534,9 @@ def get_rental(rental_id: int, db: Session = Depends(get_asset_db)):
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     _apply_runtime_state(rental)
+    employee_directory = _safe_employee_directory()
     db.commit()
-    return serialize_rental(rental)
+    return _serialize_rental_with_employee(rental, employee_directory)
 
 
 @app.get("/api/offers/{offer_number}")
@@ -390,11 +550,16 @@ def get_offer_by_number(offer_number: str, db: Session = Depends(get_asset_db)):
     offer = db.execute(stmt).scalars().first()
     if not offer or _normalize_state(offer.Status) != "Offer":
         raise HTTPException(status_code=404, detail="Offer not found")
-    return serialize_rental(offer)
+    return _serialize_rental_with_employee(offer, _safe_employee_directory())
 
 
 @app.post("/api/offers/{offer_number}/checkout")
-def checkout_offer(offer_number: str, payload: OfferCheckoutRequest, db: Session = Depends(get_asset_db)):
+def checkout_offer(
+    offer_number: str,
+    payload: OfferCheckoutRequest,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -404,8 +569,10 @@ def checkout_offer(offer_number: str, payload: OfferCheckoutRequest, db: Session
     if not offer or _normalize_state(offer.Status) != "Offer":
         raise HTTPException(status_code=404, detail="Offer not found")
 
+    session = get_session(x_session_token)
+    actor_employee_id = int(session.get("employeeID")) if session else None
     checkout_payload = CreateRentalDto(
-        employeeID=payload.employeeID,
+        employeeID=actor_employee_id or payload.employeeID,
         purpose=payload.purpose or offer.Purpose,
         projectCode=payload.projectCode or offer.ProjectCode,
         startDate=payload.startDate,
@@ -428,7 +595,14 @@ def checkout_offer(offer_number: str, payload: OfferCheckoutRequest, db: Session
     _transition_state(offer, "Closed")
     offer.UpdatedDate = datetime.now()
     db.commit()
-    log_audit(db, "Rental", offer.RentalID, "OfferCheckout", f"Offer converted to reservation {created['rentalNumber']}")
+    log_audit(
+        db,
+        "Rental",
+        offer.RentalID,
+        "OfferCheckout",
+        f"Offer converted to reservation {created['rentalNumber']}",
+        user_id=actor_employee_id,
+    )
     db.commit()
     return created
 
@@ -459,6 +633,8 @@ def get_rental_availability(
 
 @app.post("/api/kiosk/lend")
 def kiosk_lend(payload: KioskLendRequest, db: Session = Depends(get_asset_db)):
+    employee_id = _resolve_employee_number_or_400(payload.employeeID)
+    employee_entry = _require_employee_or_400(employee_id)
     pin = (payload.pinCode or "").strip()
     if len(pin) < 4:
         raise HTTPException(status_code=400, detail="PIN code must be at least 4 characters.")
@@ -467,14 +643,14 @@ def kiosk_lend(payload: KioskLendRequest, db: Session = Depends(get_asset_db)):
     if not payload.rentalItems:
         raise HTTPException(status_code=400, detail="No rental items supplied.")
 
-    base_notes = f"Kiosk lend by employee {payload.employeeID}"
+    base_notes = f"Kiosk lend by employee {employee_id}"
     photo_path = None
     if payload.photoDataUrl:
         photo_path = _save_data_url_image(payload.photoDataUrl, RENTAL_UPLOADS_DIR, "kiosk")
         base_notes = f"{base_notes}\nPickupPhoto={photo_path}"
 
     create_payload = CreateRentalDto(
-        employeeID=payload.employeeID,
+        employeeID=employee_id,
         purpose=payload.purpose or "Kiosk lend",
         projectCode=payload.projectCode,
         startDate=payload.startDate,
@@ -506,11 +682,11 @@ def kiosk_lend(payload: KioskLendRequest, db: Session = Depends(get_asset_db)):
     if not rental:
         raise HTTPException(status_code=500, detail="Could not create kiosk rental.")
 
-    _activate_rental(db, rental, approved_by=payload.employeeID)
+    _activate_rental(db, rental, approved_by=employee_id)
     if photo_path:
         rental.CheckoutCondition = f"Kiosk photo: {photo_path}"
     db.commit()
-    log_audit(db, "Rental", rental.RentalID, "KioskLend", f"Employee {payload.employeeID}")
+    log_audit(db, "Rental", rental.RentalID, "KioskLend", f"Employee {employee_id}")
     db.commit()
 
     pickup_lines = []
@@ -530,14 +706,22 @@ def kiosk_lend(payload: KioskLendRequest, db: Session = Depends(get_asset_db)):
         )
 
     return {
-        "rental": serialize_rental(rental),
+        "rental": _serialize_rental_with_employee(rental, {str(employee_id): employee_entry}),
         "pickupItems": pickup_lines,
         "photoPath": photo_path,
     }
 
 
 @app.post("/api/rentals")
-def create_rental(payload: CreateRentalDto, db: Session = Depends(get_asset_db)):
+def create_rental(
+    payload: CreateRentalDto,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    session = get_session(x_session_token)
+    requested_employee = int(session.get("employeeID")) if session else payload.employeeID
+    employee_id = _resolve_employee_number_or_400(requested_employee)
+    employee_entry = _require_employee_or_400(employee_id)
     if payload.endDate < payload.startDate:
         raise HTTPException(status_code=400, detail="endDate must be on or after startDate.")
 
@@ -546,7 +730,7 @@ def create_rental(payload: CreateRentalDto, db: Session = Depends(get_asset_db))
         raise HTTPException(status_code=400, detail="Initial status must be Offer or Reserved.")
 
     rental = Rental(
-        EmployeeID=payload.employeeID,
+        EmployeeID=employee_id,
         Purpose=payload.purpose,
         ProjectCode=payload.projectCode,
         StartDate=payload.startDate,
@@ -582,7 +766,7 @@ def create_rental(payload: CreateRentalDto, db: Session = Depends(get_asset_db))
                     CheckoutNotes="OFFER: not reserved" if initial_status == "Offer" else "REQUESTED: awaiting approval",
                     ReturnNotes=_build_lifecycle_payload(
                         state=request_state,
-                        operator_user_id=payload.employeeID,
+                        operator_user_id=employee_id,
                     ),
                 )
             )
@@ -592,18 +776,33 @@ def create_rental(payload: CreateRentalDto, db: Session = Depends(get_asset_db))
     db.add(rental)
     db.commit()
     db.refresh(rental)
+    log_audit(db, "Rental", rental.RentalID, "CreateRental", f"Created with status {initial_status}", user_id=employee_id)
+    db.commit()
 
-    return serialize_rental(rental)
+    return _serialize_rental_with_employee(rental, {str(employee_id): employee_entry})
 
 
 @app.post("/api/rentals/{rental_id}/approve")
-def approve_rental(rental_id: int, db: Session = Depends(get_asset_db)):
-    decision = ReservationDecisionRequest(decision="approve", operatorUserID=1)
+def approve_rental(
+    rental_id: int,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    decision = ReservationDecisionRequest(
+        decision="approve",
+        operatorUserID=_resolve_actor_user_id(None, x_session_token),
+    )
     return decide_rental(rental_id, decision, db)
 
 
 @app.post("/api/rentals/{rental_id}/decide")
-def decide_rental(rental_id: int, payload: ReservationDecisionRequest, db: Session = Depends(get_asset_db)):
+def decide_rental(
+    rental_id: int,
+    payload: ReservationDecisionRequest,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    payload.operatorUserID = _resolve_actor_user_id(payload.operatorUserID, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -633,7 +832,7 @@ def decide_rental(rental_id: int, payload: ReservationDecisionRequest, db: Sessi
             )
         )
         db.commit()
-        log_audit(db, "Rental", rental_id, "Reject", f"Rejected by {payload.operatorUserID}: {reason}")
+        log_audit(db, "Rental", rental_id, "Reject", f"Rejected by {payload.operatorUserID}: {reason}", user_id=payload.operatorUserID)
         db.commit()
         return {"message": "Reservation rejected", "rentalNumber": rental.RentalNumber}
 
@@ -661,9 +860,10 @@ def decide_rental(rental_id: int, payload: ReservationDecisionRequest, db: Sessi
         rental_id,
         "ApproveReservation",
         f"Approved by {payload.operatorUserID}; reserved={allocation['reservedCount']} shortage={allocation['shortageCount']}",
+        user_id=payload.operatorUserID,
     )
     db.commit()
-    return {"message": "Reservation approved", "allocation": allocation, "rental": serialize_rental(rental)}
+    return {"message": "Reservation approved", "allocation": allocation, "rental": _serialize_rental_with_employee(rental, _safe_employee_directory())}
 
 
 @app.post("/api/rentals/{rental_id}/mark-items-for-rental")
@@ -671,7 +871,9 @@ def mark_items_for_rental(
     rental_id: int,
     payload: MarkItemsForRentalRequest,
     db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
+    payload.operatorUserID = _resolve_actor_user_id(payload.operatorUserID, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -806,13 +1008,26 @@ def mark_items_for_rental(
     recalc_total_cost(rental)
     db.commit()
     db.refresh(rental)
-    log_audit(db, "Rental", rental.RentalID, "MarkItemsForRental", f"Items marked by {payload.operatorUserID}")
+    log_audit(
+        db,
+        "Rental",
+        rental.RentalID,
+        "MarkItemsForRental",
+        f"Items marked by {payload.operatorUserID}",
+        user_id=payload.operatorUserID,
+    )
     db.commit()
-    return serialize_rental(rental)
+    return _serialize_rental_with_employee(rental, _safe_employee_directory())
 
 
 @app.post("/api/rentals/{rental_id}/extend")
-def extend_rental(rental_id: int, payload: ExtensionRequest, db: Session = Depends(get_asset_db)):
+def extend_rental(
+    rental_id: int,
+    payload: ExtensionRequest,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    actor_user_id = _resolve_actor_user_id(None, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -850,13 +1065,18 @@ def extend_rental(rental_id: int, payload: ExtensionRequest, db: Session = Depen
     recalc_total_cost(rental)
 
     db.commit()
-    log_audit(db, "Rental", rental_id, "Extend", f"Extended to {payload.newEndDate}")
+    log_audit(db, "Rental", rental_id, "Extend", f"Extended to {payload.newEndDate}", user_id=actor_user_id)
     db.commit()
     return {"message": "Rental Extended"}
 
 
 @app.post("/api/rentals/{rental_id}/cancel")
-def cancel_rental(rental_id: int, db: Session = Depends(get_asset_db)):
+def cancel_rental(
+    rental_id: int,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    actor_user_id = _resolve_actor_user_id(None, x_session_token)
     rental = db.get(Rental, rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
@@ -865,7 +1085,7 @@ def cancel_rental(rental_id: int, db: Session = Depends(get_asset_db)):
         decision = ReservationDecisionRequest(
             decision="reject",
             reason="Cancelled by warehouse dispatcher",
-            operatorUserID=1,
+            operatorUserID=actor_user_id,
         )
         return decide_rental(rental_id, decision, db)
     if current not in {"Offer"}:
@@ -874,13 +1094,19 @@ def cancel_rental(rental_id: int, db: Session = Depends(get_asset_db)):
     _transition_state(rental, "Closed")
     rental.UpdatedDate = datetime.now()
     db.commit()
-    log_audit(db, "Rental", rental_id, "Cancel", "Rental closed")
+    log_audit(db, "Rental", rental_id, "Cancel", "Rental closed", user_id=actor_user_id)
     db.commit()
     return {"message": "Rental Closed"}
 
 
 @app.post("/api/rentals/{rental_id}/return")
-def return_rental(rental_id: int, payload: ReturnRequest, db: Session = Depends(get_asset_db)):
+def return_rental(
+    rental_id: int,
+    payload: ReturnRequest,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    actor_user_id = _resolve_actor_user_id(None, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -896,7 +1122,7 @@ def return_rental(rental_id: int, payload: ReturnRequest, db: Session = Depends(
 
     apply_return_updates(db, rental, payload.condition, payload.notes)
     db.commit()
-    log_audit(db, "Rental", rental_id, "Return", "Rental returned")
+    log_audit(db, "Rental", rental_id, "Return", "Rental returned", user_id=actor_user_id)
     db.commit()
     return {"message": "Return processed successfully"}
 
@@ -906,7 +1132,9 @@ def receive_marked_items(
     rental_id: int,
     payload: ReceiveMarkedItemsRequest,
     db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
+    payload.operatorUserID = _resolve_actor_user_id(payload.operatorUserID, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -997,13 +1225,26 @@ def receive_marked_items(
     recalc_total_cost(rental)
     db.commit()
     db.refresh(rental)
-    log_audit(db, "Rental", rental.RentalID, "ReceiveMarkedItems", f"Items received by {payload.operatorUserID}")
+    log_audit(
+        db,
+        "Rental",
+        rental.RentalID,
+        "ReceiveMarkedItems",
+        f"Items received by {payload.operatorUserID}",
+        user_id=payload.operatorUserID,
+    )
     db.commit()
-    return serialize_rental(rental)
+    return _serialize_rental_with_employee(rental, _safe_employee_directory())
 
 
 @app.post("/api/rentals/{rental_id}/force-extend")
-def force_extend_rental(rental_id: int, payload: ExtensionRequest, db: Session = Depends(get_asset_db)):
+def force_extend_rental(
+    rental_id: int,
+    payload: ExtensionRequest,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    actor_user_id = _resolve_actor_user_id(None, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -1025,13 +1266,19 @@ def force_extend_rental(rental_id: int, payload: ExtensionRequest, db: Session =
     rental.UpdatedDate = datetime.now()
     recalc_total_cost(rental)
     db.commit()
-    log_audit(db, "Rental", rental_id, "ForceExtend", f"Force-extended to {payload.newEndDate}")
+    log_audit(db, "Rental", rental_id, "ForceExtend", f"Force-extended to {payload.newEndDate}", user_id=actor_user_id)
     db.commit()
     return {"message": "Rental Force Extended"}
 
 
 @app.post("/api/rentals/{rental_id}/force-return")
-def force_return_rental(rental_id: int, payload: ReturnRequest, db: Session = Depends(get_asset_db)):
+def force_return_rental(
+    rental_id: int,
+    payload: ReturnRequest,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    actor_user_id = _resolve_actor_user_id(None, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -1047,13 +1294,18 @@ def force_return_rental(rental_id: int, payload: ReturnRequest, db: Session = De
 
     apply_return_updates(db, rental, payload.condition or "Forced Return", payload.notes)
     db.commit()
-    log_audit(db, "Rental", rental_id, "ForceReturn", "Rental force returned")
+    log_audit(db, "Rental", rental_id, "ForceReturn", "Rental force returned", user_id=actor_user_id)
     db.commit()
     return {"message": "Rental Force Returned"}
 
 
 @app.post("/api/rentals/{rental_id}/mark-lost")
-def mark_rental_lost(rental_id: int, db: Session = Depends(get_asset_db)):
+def mark_rental_lost(
+    rental_id: int,
+    db: Session = Depends(get_asset_db),
+    x_session_token: str | None = Header(None, alias="X-Session-Token"),
+):
+    actor_user_id = _resolve_actor_user_id(None, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems).selectinload(RentalItem.Tool))
@@ -1078,7 +1330,7 @@ def mark_rental_lost(rental_id: int, db: Session = Depends(get_asset_db)):
     rental.LossReason = "Not returned"
     rental.UpdatedDate = datetime.now()
     db.commit()
-    log_audit(db, "Rental", rental_id, "MarkLost", f"Loss {total_loss:.2f}")
+    log_audit(db, "Rental", rental_id, "MarkLost", f"Loss {total_loss:.2f}", user_id=actor_user_id)
     db.commit()
     return {"message": "Rental marked as lost", "lossAmount": total_loss}
 
@@ -1637,6 +1889,111 @@ def _save_data_url_image(data_url: str, destination_dir: Path, prefix: str) -> s
     with target.open("wb") as output:
         output.write(binary)
     return f"/uploads/rentals/{filename}"
+
+
+def _safe_employee_directory() -> dict[str, dict[str, str]]:
+    try:
+        return get_employee_directory()
+    except EmployeeDirectoryError:
+        return {}
+
+
+def _require_session_or_401(session_token: str | None) -> dict:
+    session = get_session(session_token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Not logged in.")
+    return session
+
+
+def _require_admin_session_or_403(session_token: str | None) -> dict:
+    session = _require_session_or_401(session_token)
+    if str(session.get("role") or "").strip() != "Admin":
+        raise HTTPException(status_code=403, detail="Admin role required.")
+    return session
+
+
+def _resolve_actor_user_id(candidate_user_id: int | None, session_token: str | None) -> int | None:
+    if candidate_user_id is not None:
+        try:
+            value = int(candidate_user_id)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+    session = get_session(session_token)
+    if not session:
+        return None
+    try:
+        value = int(session.get("employeeID") or 0)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _resolve_employee_number_or_400(raw_value: int | str) -> int:
+    raw = str(raw_value).strip()
+    if not raw or not raw.isdigit():
+        raise HTTPException(status_code=400, detail="employeeID must be a numeric employee number.")
+    value = int(raw)
+    if value <= 0:
+        raise HTTPException(status_code=400, detail="employeeID must be greater than zero.")
+    return value
+
+
+def _require_employee_or_400(employee_id: int) -> dict[str, str]:
+    try:
+        directory = get_employee_directory()
+    except EmployeeDirectoryError:
+        return {
+            "number": str(employee_id),
+            "normalizedNumber": str(employee_id),
+            "name": f"Employee #{employee_id}",
+            "initials": "",
+            "displayName": f"Employee #{employee_id}",
+            "email": "",
+            "departmentCode": "",
+        }
+
+    entry = directory.get(str(employee_id))
+    if not entry:
+        return {
+            "number": str(employee_id),
+            "normalizedNumber": str(employee_id),
+            "name": f"Employee #{employee_id}",
+            "initials": "",
+            "displayName": f"Employee #{employee_id}",
+            "email": "",
+            "departmentCode": "",
+        }
+    return entry
+
+
+def _serialize_rental_with_employee(rental: Rental, employee_directory: dict[str, dict[str, str]] | None = None) -> dict:
+    payload = serialize_rental(rental)
+    directory = employee_directory or {}
+    employee_key = str(payload.get("employeeID"))
+    employee_entry = directory.get(employee_key)
+    if employee_entry:
+        payload["employeeName"] = employee_entry.get("name")
+        payload["employeeInitials"] = employee_entry.get("initials")
+        payload["employeeDisplay"] = employee_entry.get("displayName")
+    else:
+        fallback_id = payload.get("employeeID")
+        payload["employeeName"] = None
+        payload["employeeInitials"] = None
+        payload["employeeDisplay"] = f"Employee #{fallback_id}" if fallback_id is not None else "Unknown employee"
+
+    approver = payload.get("approvedBy")
+    if approver is None:
+        payload["approvedByDisplay"] = None
+    else:
+        approver_entry = directory.get(str(approver))
+        payload["approvedByDisplay"] = (
+            approver_entry.get("displayName")
+            if approver_entry
+            else f"Employee #{approver}"
+        )
+    return payload
 
 
 def _normalize_state(raw: str | None) -> str:

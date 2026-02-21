@@ -11,7 +11,26 @@ Use one script path only:
 Run it the same way each time:
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\deploy_to_debian.ps1 -AllowInteractiveAuth -AllowInteractiveSudo
+```
+
+For this environment, use interactive SSH auth + interactive sudo by default.
+If you explicitly need non-interactive behavior, run without flags:
+
+```powershell
 powershell -ExecutionPolicy Bypass -File .\deploy\deploy_to_debian.ps1
+```
+
+If you only need interactive SSH auth:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\deploy_to_debian.ps1 -AllowInteractiveAuth
+```
+
+If you only need interactive sudo:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\deploy_to_debian.ps1 -AllowInteractiveSudo
 ```
 
 ## What The Script Must Do
@@ -65,7 +84,6 @@ After any code change:
 1. Save changes locally.
 2. Run:
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\deploy\deploy_to_debian.ps1
+   powershell -ExecutionPolicy Bypass -File .\deploy\deploy_to_debian.ps1 -AllowInteractiveAuth -AllowInteractiveSudo
    ```
 3. Confirm script reports healthy service.
-

@@ -555,12 +555,14 @@
             <div class="mt-4 space-y-3">
                 <div class="grid grid-cols-2 gap-2">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Employee ID</label>
-                        <input type="number" id="rental-employee" min="1" value="1" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Responsible Employee</label>
+                        <input type="text" id="rental-employee-display" class="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-700" readonly>
                     </div>
-                    <div>
+                    <div class="relative">
                         <label class="block text-sm font-medium text-gray-700 mb-1">Project Code</label>
-                        <input type="text" id="rental-project" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. PRJ-2026-01">
+                        <input type="text" id="rental-project-search" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type to search project code">
+                        <input type="hidden" id="rental-project">
+                        <div id="rental-project-results" class="hidden absolute left-0 right-0 z-20 mt-1 bg-white border border-gray-300 rounded-md shadow max-h-40 overflow-y-auto"></div>
                     </div>
                 </div>
                 <div>
@@ -831,6 +833,8 @@
         class CatalogManager {
             constructor() {
                 this.equipment = [];
+                this.employees = [];
+                this.currentUser = null;
                 this.cart = [];
                 this.isKioskMode = false;
                 this.currentView = 'grid';
@@ -846,6 +850,7 @@
                     search: '',
                     certification: false
                 };
+                this.projectSearchTimer = null;
                 this.init();
             }
 
@@ -861,6 +866,9 @@
                 }
 
                 if (window.sqlAPI) {
+                    this.currentUser = await window.sqlAPI.getCurrentUser();
+                    await this.loadEmployees();
+                    this.applyCurrentUserToForm();
                     await this.loadEquipment();
                 } else {
                     console.error("SQL API not loaded");
@@ -897,6 +905,78 @@
                 } catch (error) {
                     console.error("Failed to load equipment from SQL:", error);
                 }
+            }
+
+            async loadEmployees() {
+                try {
+                    const rows = await window.sqlAPI.getEmployees();
+                    this.employees = Array.isArray(rows) ? rows : [];
+                } catch (error) {
+                    console.error("Failed to load employees:", error);
+                    this.employees = [];
+                }
+            }
+
+            applyCurrentUserToForm() {
+                const employeeDisplay = document.getElementById('rental-employee-display');
+                if (!employeeDisplay) return;
+                const employeeID = parseInt(this.currentUser?.employeeID || '0', 10);
+                const employee = this.employees.find((e) => Number(e.employeeID) === employeeID) || null;
+                if (!employee || !employeeID) {
+                    employeeDisplay.value = 'Login required';
+                    return;
+                }
+                employeeDisplay.value = `${employee.displayName || employee.name} (${employee.employeeID})`;
+            }
+
+            clearProjectSelection() {
+                const hidden = document.getElementById('rental-project');
+                if (hidden) hidden.value = '';
+            }
+
+            setProjectSelection(projectCode) {
+                const value = String(projectCode || '').trim();
+                const hidden = document.getElementById('rental-project');
+                const search = document.getElementById('rental-project-search');
+                const results = document.getElementById('rental-project-results');
+                if (hidden) hidden.value = value;
+                if (search) search.value = value;
+                if (results) {
+                    results.innerHTML = '';
+                    results.classList.add('hidden');
+                }
+            }
+
+            renderProjectResults(rows) {
+                const results = document.getElementById('rental-project-results');
+                if (!results) return;
+                results.innerHTML = '';
+                if (!rows || rows.length === 0) {
+                    results.classList.add('hidden');
+                    return;
+                }
+                rows.forEach((row) => {
+                    const code = String(row.projectCode || '').trim();
+                    if (!code) return;
+                    const item = document.createElement('button');
+                    item.type = 'button';
+                    item.className = 'w-full text-left px-3 py-2 hover:bg-gray-50 text-sm';
+                    item.textContent = row.display || code;
+                    item.addEventListener('click', () => this.setProjectSelection(code));
+                    results.appendChild(item);
+                });
+                results.classList.remove('hidden');
+            }
+
+            async performProjectSearch(rawQuery) {
+                const query = String(rawQuery || '').trim();
+                if (!query) {
+                    this.renderProjectResults([]);
+                    this.clearProjectSelection();
+                    return;
+                }
+                const rows = await window.sqlAPI.searchProjects(query, 20).catch(() => []);
+                this.renderProjectResults(rows || []);
             }
 
             setupEventListeners() {
@@ -955,6 +1035,30 @@
                 document.getElementById('rental-end').addEventListener('change', () => {
                     this.updateCartTotal();
                 });
+                const projectInput = document.getElementById('rental-project-search');
+                if (projectInput) {
+                    projectInput.addEventListener('input', (e) => {
+                        this.clearProjectSelection();
+                        if (this.projectSearchTimer) {
+                            clearTimeout(this.projectSearchTimer);
+                        }
+                        const query = e.target.value || '';
+                        this.projectSearchTimer = setTimeout(() => {
+                            this.performProjectSearch(query).catch(() => this.renderProjectResults([]));
+                        }, 180);
+                    });
+                    projectInput.addEventListener('focus', () => {
+                        const query = projectInput.value || '';
+                        if (query.trim()) {
+                            this.performProjectSearch(query).catch(() => this.renderProjectResults([]));
+                        }
+                    });
+                    projectInput.addEventListener('blur', () => {
+                        setTimeout(() => {
+                            document.getElementById('rental-project-results')?.classList.add('hidden');
+                        }, 120);
+                    });
+                }
 
                 const offerInput = document.getElementById('offer-number');
                 if (offerInput) {
@@ -1737,6 +1841,8 @@
             }
 
             updateCartDisplay() {
+                this.currentUser = window.sqlAPI?.currentUser || this.currentUser;
+                this.applyCurrentUserToForm();
                 const cartContainer = document.getElementById('cart-items');
                 const cartBadge = document.getElementById('cart-badge');
 
@@ -1920,12 +2026,14 @@
             }
 
             getRentalFormData() {
-                const employeeID = parseInt(document.getElementById('rental-employee')?.value || '0', 10);
+                const activeUser = window.sqlAPI?.currentUser || this.currentUser;
+                const employeeID = parseInt(activeUser?.employeeID || '0', 10);
                 const projectCode = (document.getElementById('rental-project')?.value || '').trim();
                 const purpose = (document.getElementById('rental-purpose')?.value || '').trim() || 'Webshop rental';
                 const startDate = document.getElementById('rental-start')?.value;
                 const endDate = document.getElementById('rental-end')?.value;
-                return { employeeID, projectCode, purpose, startDate, endDate };
+                const employee = this.employees.find((e) => String(e.employeeID) === String(employeeID)) || null;
+                return { employeeID, employee, projectCode, purpose, startDate, endDate };
             }
 
             buildRentalItemsPayload() {
@@ -1941,7 +2049,11 @@
             async executeCheckout() {
                 const form = this.getRentalFormData();
                 if (!form.employeeID || form.employeeID < 1) {
-                    alert('Employee ID is required.');
+                    alert('Login is required.');
+                    return;
+                }
+                if (!form.projectCode) {
+                    alert('Select project code from search results.');
                     return;
                 }
                 if (!form.startDate || !form.endDate) {
@@ -2018,7 +2130,11 @@
                     return;
                 }
                 if (!form.employeeID || form.employeeID < 1) {
-                    alert('Employee ID is required.');
+                    alert('Login is required.');
+                    return;
+                }
+                if (!form.projectCode) {
+                    alert('Select project code from search results.');
                     return;
                 }
                 if (this.cart.length === 0) {
@@ -2062,8 +2178,10 @@
 
                 document.getElementById('rental-start').value = (offer.startDate || '').split('T')[0] || offer.startDate || '';
                 document.getElementById('rental-end').value = (offer.endDate || '').split('T')[0] || offer.endDate || '';
-                document.getElementById('rental-employee').value = String(offer.employeeID || 1);
-                document.getElementById('rental-project').value = offer.projectCode || '';
+                if (offer.employeeID && Number(offer.employeeID) !== Number(this.currentUser?.employeeID || 0)) {
+                    alert('Offer belongs to another employee. Checkout will use current logged in employee.');
+                }
+                this.setProjectSelection(offer.projectCode || '');
                 document.getElementById('rental-purpose').value = offer.purpose || '';
 
                 this.cart = [];
@@ -2107,7 +2225,7 @@
                 const html = `
                     <html><head><title>Rental Offer ${offerNumber}</title></head><body>
                     <h2>Rental Offer ${offerNumber}</h2>
-                    <p>Employee ID: ${form.employeeID || '-'}</p>
+                    <p>Employee: ${this.escapeHtml(form.employee?.displayName || `Employee #${form.employeeID || '-'}`)}</p>
                     <p>Project: ${this.escapeHtml(form.projectCode || '-')}</p>
                     <p>Purpose: ${this.escapeHtml(form.purpose || '-')}</p>
                     <p>Period: ${startDate} to ${endDate} (${rentalDays} day(s))</p>

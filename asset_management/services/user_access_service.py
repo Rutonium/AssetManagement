@@ -1,0 +1,216 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import secrets
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+
+DEFAULT_PASSWORD = "1234"
+SESSION_TTL_SECONDS = 60 * 60 * 12
+DEFAULT_ROLE = "Admin"
+
+RIGHTS_BY_ROLE = {
+    "Admin": {
+        "manageUsers": True,
+        "manageRentals": True,
+        "manageWarehouse": True,
+        "manageEquipment": True,
+        "checkout": True,
+    },
+    "User": {
+        "manageUsers": False,
+        "manageRentals": False,
+        "manageWarehouse": False,
+        "manageEquipment": False,
+        "checkout": True,
+    },
+}
+
+_BASE_DIR = Path(__file__).resolve().parent.parent
+_DATA_DIR = _BASE_DIR / "data"
+_STORE_PATH = _DATA_DIR / "user_access.json"
+_LOCK = threading.Lock()
+_SESSIONS: dict[str, dict[str, Any]] = {}
+
+
+def _ensure_data_dir() -> None:
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _normalize_role(raw_role: str | None) -> str:
+    role = (raw_role or "").strip()
+    if role in RIGHTS_BY_ROLE:
+        return role
+    return DEFAULT_ROLE
+
+
+def _normalize_rights(raw_rights: dict[str, Any] | None, role: str) -> dict[str, bool]:
+    baseline = dict(RIGHTS_BY_ROLE.get(role, RIGHTS_BY_ROLE[DEFAULT_ROLE]))
+    if not isinstance(raw_rights, dict):
+        return baseline
+    for key in list(baseline.keys()):
+        if key in raw_rights:
+            baseline[key] = bool(raw_rights.get(key))
+    return baseline
+
+
+def _password_hash(password: str, salt: str) -> str:
+    raw = hashlib.pbkdf2_hmac(
+        "sha256",
+        (password or "").encode("utf-8"),
+        salt.encode("utf-8"),
+        120000,
+    )
+    return raw.hex()
+
+
+def _load_store_unlocked() -> dict[str, Any]:
+    _ensure_data_dir()
+    if not _STORE_PATH.exists():
+        return {"users": {}}
+    try:
+        payload = json.loads(_STORE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {"users": {}}
+    if not isinstance(payload, dict):
+        return {"users": {}}
+    if not isinstance(payload.get("users"), dict):
+        payload["users"] = {}
+    return payload
+
+
+def _save_store_unlocked(store: dict[str, Any]) -> None:
+    _ensure_data_dir()
+    _STORE_PATH.write_text(json.dumps(store, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def get_user_record(employee_id: int) -> dict[str, Any]:
+    employee_key = str(int(employee_id))
+    with _LOCK:
+        store = _load_store_unlocked()
+        raw_user = store.get("users", {}).get(employee_key) or {}
+    role = _normalize_role(raw_user.get("role"))
+    return {
+        "employeeID": int(employee_id),
+        "role": role,
+        "rights": _normalize_rights(raw_user.get("rights"), role),
+        "hasCustomPassword": bool(raw_user.get("passwordHash")),
+    }
+
+
+def list_user_records(employee_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    users: list[dict[str, Any]] = []
+    for row in employee_rows:
+        try:
+            employee_id = int(row.get("normalizedNumber") or row.get("employeeID") or 0)
+        except (TypeError, ValueError):
+            continue
+        if employee_id <= 0:
+            continue
+        access = get_user_record(employee_id)
+        users.append(
+            {
+                "employeeID": employee_id,
+                "employeeNumber": row.get("number") or str(employee_id),
+                "name": row.get("name") or "",
+                "initials": row.get("initials") or "",
+                "displayName": row.get("displayName") or row.get("name") or str(employee_id),
+                "departmentCode": row.get("departmentCode") or "",
+                "role": access["role"],
+                "rights": access["rights"],
+                "hasCustomPassword": access["hasCustomPassword"],
+            }
+        )
+    users.sort(key=lambda item: (item["name"].lower(), item["employeeID"]))
+    return users
+
+
+def update_user_record(
+    employee_id: int,
+    *,
+    role: str | None = None,
+    rights: dict[str, Any] | None = None,
+    password: str | None = None,
+    reset_password: bool = False,
+) -> dict[str, Any]:
+    employee_key = str(int(employee_id))
+    with _LOCK:
+        store = _load_store_unlocked()
+        users = store.setdefault("users", {})
+        existing = users.get(employee_key) or {}
+
+        current_role = _normalize_role(existing.get("role"))
+        next_role = _normalize_role(role if role is not None else current_role)
+        next_rights = _normalize_rights(rights if rights is not None else existing.get("rights"), next_role)
+        existing["role"] = next_role
+        existing["rights"] = next_rights
+
+        if reset_password:
+            existing.pop("passwordHash", None)
+            existing.pop("passwordSalt", None)
+            existing.pop("passwordUpdatedAt", None)
+        elif password is not None:
+            trimmed = str(password).strip()
+            if len(trimmed) < 4:
+                raise ValueError("Password must be at least 4 characters.")
+            salt = secrets.token_hex(16)
+            existing["passwordSalt"] = salt
+            existing["passwordHash"] = _password_hash(trimmed, salt)
+            existing["passwordUpdatedAt"] = int(time.time())
+
+        users[employee_key] = existing
+        _save_store_unlocked(store)
+
+    return get_user_record(int(employee_id))
+
+
+def verify_password(employee_id: int, pin_code: str) -> bool:
+    candidate = (pin_code or "").strip()
+    if len(candidate) < 4:
+        return False
+    employee_key = str(int(employee_id))
+    with _LOCK:
+        store = _load_store_unlocked()
+        existing = store.get("users", {}).get(employee_key) or {}
+        stored_hash = existing.get("passwordHash")
+        stored_salt = existing.get("passwordSalt")
+
+    if not stored_hash or not stored_salt:
+        return candidate == DEFAULT_PASSWORD
+    return _password_hash(candidate, stored_salt) == stored_hash
+
+
+def create_session(payload: dict[str, Any]) -> str:
+    token = secrets.token_urlsafe(32)
+    expires_at = time.time() + SESSION_TTL_SECONDS
+    session_payload = dict(payload)
+    session_payload["expiresAt"] = expires_at
+    with _LOCK:
+        _SESSIONS[token] = session_payload
+    return token
+
+
+def get_session(token: str | None) -> dict[str, Any] | None:
+    if not token:
+        return None
+    now = time.time()
+    with _LOCK:
+        session = _SESSIONS.get(token)
+        if not session:
+            return None
+        expires_at = float(session.get("expiresAt") or 0.0)
+        if now >= expires_at:
+            _SESSIONS.pop(token, None)
+            return None
+        return dict(session)
+
+
+def remove_session(token: str | None) -> None:
+    if not token:
+        return
+    with _LOCK:
+        _SESSIONS.pop(token, None)

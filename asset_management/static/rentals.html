@@ -272,10 +272,9 @@
                 <form id="new-rental-form" class="space-y-4">
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium mb-1">User</label>
+                            <label class="block text-sm font-medium mb-1">Employee</label>
                             <select id="rental-user" class="form-input">
-                                <option value="1">John Smith</option>
-                                <option value="2">Sarah Johnson</option>
+                                <option value="">Loading employees...</option>
                             </select>
                         </div>
                         <div>
@@ -384,6 +383,8 @@
         class RentalManager {
             constructor() {
                 this.rentals = [];
+                this.employees = [];
+                this.currentUser = null;
                 this.currentFilter = 'all';
                 this.selectedRentalId = null;
                 this.reservationReview = null;
@@ -393,8 +394,68 @@
 
             async init() {
                 while (!window.sqlAPI) await new Promise(r => setTimeout(r, 100));
+                this.currentUser = await window.sqlAPI.getCurrentUser();
+                await this.loadEmployees();
                 this.loadRentalsFromSQL();
                 this.setupEventListeners();
+            }
+
+            async loadEmployees() {
+                try {
+                    const rows = await window.sqlAPI.getEmployees();
+                    this.employees = Array.isArray(rows) ? rows : [];
+                } catch (e) {
+                    console.error(e);
+                    this.employees = [];
+                }
+                this.populateEmployeeDropdown();
+            }
+
+            populateEmployeeDropdown(selectedEmployeeID = null) {
+                const select = document.getElementById('rental-user');
+                if (!select) return;
+
+                const selectedValue = selectedEmployeeID != null
+                    ? String(selectedEmployeeID)
+                    : String(this.currentUser?.employeeID || select.value || '');
+                select.innerHTML = '';
+
+                if (!this.employees.length) {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'No employees available';
+                    select.appendChild(option);
+                    return;
+                }
+
+                this.employees.forEach((employee) => {
+                    const option = document.createElement('option');
+                    option.value = String(employee.employeeID);
+                    option.textContent = employee.displayName || `${employee.initials || ''} - ${employee.name || employee.employeeID}`.trim();
+                    select.appendChild(option);
+                });
+
+                const hasSelected = selectedValue && Array.from(select.options).some((opt) => opt.value === selectedValue);
+                if (selectedValue && !hasSelected) {
+                    const fallbackOption = document.createElement('option');
+                    fallbackOption.value = selectedValue;
+                    fallbackOption.textContent = `Unknown Employee #${selectedValue}`;
+                    select.appendChild(fallbackOption);
+                }
+
+                if (selectedValue && (hasSelected || Array.from(select.options).some((opt) => opt.value === selectedValue))) {
+                    select.value = selectedValue;
+                } else {
+                    select.selectedIndex = 0;
+                }
+            }
+
+            getEmployeeDisplay(employeeID, fallback = null) {
+                const employee = this.employees.find((e) => String(e.employeeID) === String(employeeID));
+                if (employee) {
+                    return employee.displayName || `${employee.initials || ''} - ${employee.name || employee.employeeID}`.trim();
+                }
+                return fallback || `Employee #${employeeID}`;
             }
 
             async loadRentalsFromSQL() {
@@ -405,7 +466,7 @@
                         return {
                             id: r.rentalID,
                             raw: r,
-                            user: { name: `Employee #${r.employeeID}`, department: 'General' },
+                            user: { name: r.employeeDisplay || this.getEmployeeDisplay(r.employeeID), department: r.employeeDepartmentCode || 'General' },
                             purpose: r.purpose,
                             project_code: r.projectCode,
                             status: this.getUiStatus(r),
@@ -578,6 +639,7 @@
 
             // Actions
             async updateStatus(id, action) {
+                this.currentUser = window.sqlAPI?.currentUser || this.currentUser;
                 if (confirm('Proceed?')) {
                     if (action === 'cancel') {
                         const reason = prompt('Enter rejection reason:');
@@ -588,7 +650,7 @@
                         const decided = await window.sqlAPI.decideReservation(id, {
                             decision: 'reject',
                             reason: reason.trim(),
-                            operatorUserID: 1
+                            operatorUserID: parseInt(this.currentUser?.employeeID || '0', 10) || null
                         });
                         if (!decided) {
                             alert('Reject failed.');
@@ -628,7 +690,7 @@
                 if (summary) {
                     summary.innerHTML = `
                         <div><strong>Reservation:</strong> ${rental.rentalNumber}</div>
-                        <div><strong>Employee:</strong> ${rental.employeeID}</div>
+                        <div><strong>Employee:</strong> ${rental.employeeDisplay || this.getEmployeeDisplay(rental.employeeID)}</div>
                         <div><strong>Project:</strong> ${rental.projectCode || '-'}</div>
                         <div><strong>Period:</strong> ${new Date(rental.startDate).toLocaleDateString()} - ${new Date(rental.endDate).toLocaleDateString()}</div>
                     `;
@@ -667,6 +729,7 @@
             }
 
             async submitReservationDecision(decision) {
+                this.currentUser = window.sqlAPI?.currentUser || this.currentUser;
                 if (!this.reservationReview) return;
                 const { id, availabilityLines } = this.reservationReview;
                 const reason = (document.getElementById('reservation-reject-reason')?.value || '').trim();
@@ -688,7 +751,7 @@
                 const payload = {
                     decision,
                     reason: decision === 'reject' ? reason : null,
-                    operatorUserID: 1,
+                    operatorUserID: parseInt(this.currentUser?.employeeID || '0', 10) || null,
                     shortageActions
                 };
                 const result = await window.sqlAPI.decideReservation(id, payload);
@@ -759,7 +822,8 @@
             }
 
             async createNewRental() {
-                const userId = document.getElementById('rental-user').value;
+                this.currentUser = window.sqlAPI?.currentUser || this.currentUser;
+                const userId = parseInt(this.currentUser?.employeeID || document.getElementById('rental-user').value || '0', 10);
                 const project = document.getElementById('rental-project').value;
                 const purpose = document.getElementById('rental-purpose').value;
                 const start = document.getElementById('rental-start-date').value;
@@ -767,10 +831,11 @@
 
                 const selectedIds = Array.from(document.querySelectorAll('.equipment-checkbox:checked')).map(cb => parseInt(cb.value));
 
+                if (!userId || userId < 1) { alert('Select an employee'); return; }
                 if (selectedIds.length === 0) { alert('Select equipment'); return; }
 
                 const payload = {
-                    employeeID: parseInt(userId),
+                    employeeID: userId,
                     purpose: purpose,
                     projectCode: project,
                     startDate: start,

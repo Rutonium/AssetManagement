@@ -9,20 +9,156 @@ class SQLServerAPI {
                 ? '/asset_management/api'
                 : '/api';
         }
-        this.currentUser = {
-            id: 1,
-            full_name: 'Admin User',
-            role: 'Admin'
-        };
+        this.currentUser = null;
+        this.sessionTokenKey = 'asset_management_session_token';
+    }
+
+    getSessionToken() {
+        try {
+            return window.localStorage.getItem(this.sessionTokenKey) || '';
+        } catch (_) {
+            return '';
+        }
+    }
+
+    setSessionToken(token) {
+        try {
+            if (token) {
+                window.localStorage.setItem(this.sessionTokenKey, String(token));
+            } else {
+                window.localStorage.removeItem(this.sessionTokenKey);
+            }
+        } catch (_) {
+            // ignore localStorage issues
+        }
+    }
+
+    _withAuth(init) {
+        const source = init || {};
+        const headers = { ...(source.headers || {}) };
+        const token = this.getSessionToken();
+        if (token) {
+            headers['X-Session-Token'] = token;
+        }
+        return { ...source, headers };
+    }
+
+    async _fetch(url, init) {
+        return fetch(url, this._withAuth(init));
     }
 
     async _getJson(url, init) {
-        const response = await fetch(url, init);
+        const response = await this._fetch(url, init);
         if (!response.ok) {
+            if (response.status === 401) {
+                this.currentUser = null;
+                this.setSessionToken('');
+            }
             const message = await response.text().catch(() => '');
             throw new Error(`${response.status} ${response.statusText}${message ? ` - ${message}` : ''}`);
         }
         return response.json();
+    }
+
+    _currentEmployeeId() {
+        const raw = this.currentUser?.employeeID || this.currentUser?.id;
+        const parsed = parseInt(raw || '0', 10);
+        return parsed > 0 ? parsed : null;
+    }
+
+    async loginEmployee(employeeID, pinCode) {
+        const payload = {
+            employeeID: parseInt(employeeID || '0', 10),
+            pinCode: String(pinCode || '')
+        };
+        const result = await this._getJson(`${this.baseUrl}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        this.setSessionToken(result?.sessionToken || '');
+        this.currentUser = result?.user || null;
+        return this.currentUser;
+    }
+
+    async loginAdmin(username, password) {
+        const payload = {
+            username: String(username || ''),
+            password: String(password || '')
+        };
+        const result = await this._getJson(`${this.baseUrl}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        this.setSessionToken(result?.sessionToken || '');
+        this.currentUser = result?.user || null;
+        return this.currentUser;
+    }
+
+    async login(employeeID, pinCode) {
+        return this.loginEmployee(employeeID, pinCode);
+    }
+
+    async logout() {
+        try {
+            await this._getJson(`${this.baseUrl}/auth/logout`, { method: 'POST' });
+        } catch (_) {
+            // ignore and clear local session anyway
+        }
+        this.currentUser = null;
+        this.setSessionToken('');
+    }
+
+    async getCurrentUser(forceRefresh = false) {
+        if (!forceRefresh && this.currentUser) {
+            return this.currentUser;
+        }
+        const token = this.getSessionToken();
+        if (!token) {
+            this.currentUser = null;
+            return null;
+        }
+        try {
+            const payload = await this._getJson(`${this.baseUrl}/auth/me`);
+            this.currentUser = payload?.user || null;
+            return this.currentUser;
+        } catch (_) {
+            this.currentUser = null;
+            this.setSessionToken('');
+            return null;
+        }
+    }
+
+    async getAdminUsers(forceRefresh = false) {
+        const qs = forceRefresh ? '?forceRefresh=true' : '';
+        return this._getJson(`${this.baseUrl}/admin/users${qs}`);
+    }
+
+    async updateAdminUser(employeeID, payload) {
+        return this._getJson(`${this.baseUrl}/admin/users/${employeeID}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {})
+        });
+    }
+
+    async searchProjects(query, limit = 20) {
+        const params = new URLSearchParams({
+            q: String(query || ''),
+            limit: String(limit || 20)
+        });
+        return this._getJson(`${this.baseUrl}/projects/search?${params.toString()}`);
+    }
+
+    async getEmployees(forceRefresh = false) {
+        try {
+            const qs = forceRefresh ? '?forceRefresh=true' : '';
+            return await this._getJson(`${this.baseUrl}/employees${qs}`);
+        } catch (error) {
+            console.error('Error fetching employees:', error);
+            return [];
+        }
     }
 
     // --- RENTALS ---
@@ -61,7 +197,7 @@ class SQLServerAPI {
 
     async createRental(rentalData) {
         try {
-            const response = await fetch(`${this.baseUrl}/rentals`, {
+            const response = await this._fetch(`${this.baseUrl}/rentals`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(rentalData)
@@ -124,20 +260,21 @@ class SQLServerAPI {
     async updateRentalStatus(id, action) {
         try {
             let response;
+            const actorUserID = this._currentEmployeeId();
             if (action === 'approve') {
-                response = await fetch(`${this.baseUrl}/rentals/${id}/decide`, {
+                response = await this._fetch(`${this.baseUrl}/rentals/${id}/decide`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ decision: 'approve', operatorUserID: 1 })
+                    body: JSON.stringify({ decision: 'approve', operatorUserID: actorUserID })
                 });
             } else if (action === 'cancel') {
-                response = await fetch(`${this.baseUrl}/rentals/${id}/decide`, {
+                response = await this._fetch(`${this.baseUrl}/rentals/${id}/decide`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ decision: 'reject', reason: 'Rejected by warehouse', operatorUserID: 1 })
+                    body: JSON.stringify({ decision: 'reject', reason: 'Rejected by warehouse', operatorUserID: actorUserID })
                 });
             } else {
-                response = await fetch(`${this.baseUrl}/rentals/${id}/${action}`, {
+                response = await this._fetch(`${this.baseUrl}/rentals/${id}/${action}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
                 });
@@ -155,10 +292,14 @@ class SQLServerAPI {
 
     async decideReservation(id, payload) {
         try {
+            const body = { ...(payload || {}) };
+            if (!body.operatorUserID) {
+                body.operatorUserID = this._currentEmployeeId();
+            }
             return await this._getJson(`${this.baseUrl}/rentals/${id}/decide`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload || {})
+                body: JSON.stringify(body)
             });
         } catch (error) {
             console.error('Error deciding reservation:', error);
@@ -168,10 +309,14 @@ class SQLServerAPI {
 
     async markItemsForRental(id, payload) {
         try {
+            const body = { ...(payload || {}) };
+            if (!body.operatorUserID) {
+                body.operatorUserID = this._currentEmployeeId();
+            }
             return await this._getJson(`${this.baseUrl}/rentals/${id}/mark-items-for-rental`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload || {})
+                body: JSON.stringify(body)
             });
         } catch (error) {
             console.error('Error marking items for rental:', error);
@@ -181,10 +326,14 @@ class SQLServerAPI {
 
     async receiveMarkedItems(id, payload) {
         try {
+            const body = { ...(payload || {}) };
+            if (!body.operatorUserID) {
+                body.operatorUserID = this._currentEmployeeId();
+            }
             return await this._getJson(`${this.baseUrl}/rentals/${id}/receive-marked-items`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload || {})
+                body: JSON.stringify(body)
             });
         } catch (error) {
             console.error('Error receiving marked items:', error);
@@ -195,7 +344,7 @@ class SQLServerAPI {
     async returnRental(id, condition, notes) {
         try {
             const payload = { condition: condition, notes: notes };
-            const response = await fetch(`${this.baseUrl}/rentals/${id}/return`, {
+            const response = await this._fetch(`${this.baseUrl}/rentals/${id}/return`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -210,7 +359,7 @@ class SQLServerAPI {
     async extendRental(id, newDate) {
         try {
             const payload = { newEndDate: newDate };
-            const response = await fetch(`${this.baseUrl}/rentals/${id}/extend`, {
+            const response = await this._fetch(`${this.baseUrl}/rentals/${id}/extend`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -225,7 +374,7 @@ class SQLServerAPI {
     async forceExtendRental(id, newDate) {
         try {
             const payload = { newEndDate: newDate };
-            const response = await fetch(`${this.baseUrl}/rentals/${id}/force-extend`, {
+            const response = await this._fetch(`${this.baseUrl}/rentals/${id}/force-extend`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -240,7 +389,7 @@ class SQLServerAPI {
     async forceReturnRental(id, condition, notes) {
         try {
             const payload = { condition: condition, notes: notes };
-            const response = await fetch(`${this.baseUrl}/rentals/${id}/force-return`, {
+            const response = await this._fetch(`${this.baseUrl}/rentals/${id}/force-return`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -254,7 +403,7 @@ class SQLServerAPI {
 
     async markRentalLost(id) {
         try {
-            const response = await fetch(`${this.baseUrl}/rentals/${id}/mark-lost`, {
+            const response = await this._fetch(`${this.baseUrl}/rentals/${id}/mark-lost`, {
                 method: 'POST'
             });
             if (!response.ok) return null;
@@ -342,7 +491,7 @@ class SQLServerAPI {
 
     async updateEquipment(id, equipmentData) {
         try {
-            const response = await fetch(`${this.baseUrl}/equipment/${id}`, {
+            const response = await this._fetch(`${this.baseUrl}/equipment/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(equipmentData)
@@ -392,7 +541,7 @@ class SQLServerAPI {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${this.baseUrl}/equipment/upload-image`, {
+        const response = await this._fetch(`${this.baseUrl}/equipment/upload-image`, {
             method: 'POST',
             body: formData
         });
@@ -443,7 +592,7 @@ class SQLServerAPI {
 
     async deleteToolInstance(instanceId) {
         try {
-            const response = await fetch(`${this.baseUrl}/equipment/instances/${instanceId}`, {
+            const response = await this._fetch(`${this.baseUrl}/equipment/instances/${instanceId}`, {
                 method: 'DELETE'
             });
             return response.ok;
@@ -523,7 +672,7 @@ class SQLServerAPI {
                 warehouseID: warehouseId,
                 locationCode: locationCode
             };
-            const response = await fetch(`${this.baseUrl}/warehouse/assign`, {
+            const response = await this._fetch(`${this.baseUrl}/warehouse/assign`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -545,10 +694,6 @@ class SQLServerAPI {
         }
     }
 
-    // --- USER (Fixed: This was missing) ---
-    async getCurrentUser() {
-        return this.currentUser;
-    }
 }
 
 window.sqlAPI = new SQLServerAPI();

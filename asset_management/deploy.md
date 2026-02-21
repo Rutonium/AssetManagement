@@ -2,6 +2,26 @@
 
 These steps mirror the TimeApp + TED_Tender_Robot deployment pattern.
 
+## Windows PC (Work)
+
+Use the deploy script from repo root:
+
+```powershell
+.\deploy\deploy_to_debian.ps1 -AllowInteractiveAuth -AllowInteractiveSudo
+```
+
+What to expect:
+
+1. Enter SSH password when prompted for `rune@139.162.170.26`.
+2. Enter `sudo` password when prompted on the server.
+3. Script uploads the package, deploys to `/home/rune/dev/asset_management`, installs requirements, restarts `asset_management`, and runs:
+   - `http://127.0.0.1:5001/healthz`
+   - `http://127.0.0.1:5001/api/healthz`
+
+If the command completes with `Deploy complete.`, deployment succeeded.
+
+## Linux Mint PC (Home)
+
 ## 1) Package the project locally (Windows PowerShell)
 
 ```
