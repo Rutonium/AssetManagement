@@ -130,7 +130,7 @@ class EquipmentManager {
         modal.innerHTML = `
             <div style="background:#fff;border-radius:12px;padding:20px;width:min(92vw,420px);box-shadow:0 20px 30px rgba(0,0,0,0.18);">
                 <h2 style="font-size:1.25rem;font-weight:700;margin:0 0 8px 0;">Sign In</h2>
-                <p style="margin:0 0 16px 0;color:#4b5563;font-size:0.9rem;">Find your name and enter your code.</p>
+                <p style="margin:0 0 16px 0;color:#4b5563;font-size:0.9rem;">Type at least 2 letters to find your provisioned user, then enter your code.</p>
                 <div style="display:grid;gap:12px;">
                     <label style="font-size:0.8rem;font-weight:600;color:#374151;">Name</label>
                     <div id="global-login-combobox" style="position:relative;">
@@ -154,24 +154,15 @@ class EquipmentManager {
         const codeInput = document.getElementById('global-login-code');
         const submitBtn = document.getElementById('global-login-submit');
         const errorEl = document.getElementById('global-login-error');
-        const employees = await window.sqlAPI.getEmployees();
-        const allUsers = [
-            {
-                kind: 'admin',
-                username: 'admin',
-                employeeID: 999999,
-                displayName: 'Administrator (Local)',
-                searchText: 'administrator admin 999999'
-            },
-            ...(employees || []).map((employee) => ({
-                kind: 'employee',
-                employeeID: Number(employee.employeeID),
-                displayName: employee.displayName || employee.name || `Employee #${employee.employeeID}`,
-                name: employee.name || '',
-                employeeNumber: employee.employeeNumber || String(employee.employeeID),
-                searchText: `${employee.displayName || ''} ${employee.name || ''} ${employee.employeeNumber || ''} ${employee.employeeID || ''}`.toLowerCase()
-            }))
-        ];
+        const loginUsers = await window.sqlAPI.getLoginUsers().catch(() => []);
+        const allUsers = (loginUsers || []).map((user) => ({
+            kind: 'employee',
+            employeeID: Number(user.employeeID),
+            displayName: user.displayName || `Employee #${user.employeeID}`,
+            name: user.name || '',
+            employeeNumber: user.employeeNumber || String(user.employeeID),
+            searchText: `${user.displayName || ''} ${user.name || ''} ${user.employeeNumber || ''} ${user.employeeID || ''}`.toLowerCase()
+        }));
         let selectedUser = null;
         let filteredUsers = [];
         let isDropdownOpen = false;
@@ -202,6 +193,11 @@ class EquipmentManager {
 
         const renderDropdown = (query) => {
             const term = String(query || '').trim().toLowerCase();
+            if (term.length < 2) {
+                filteredUsers = [];
+                dropdownEl.innerHTML = '<div style="padding:8px;font-size:0.8rem;color:#6b7280;">Type at least 2 letters</div>';
+                return;
+            }
             filteredUsers = allUsers
                 .filter((user) => !term || user.searchText.includes(term))
                 .slice(0, 50);
@@ -249,7 +245,7 @@ class EquipmentManager {
         const tryResolveTypedSelection = () => {
             if (selectedUser) return selectedUser;
             const term = String(searchInput.value || '').trim().toLowerCase();
-            if (!term) return null;
+            if (!term || term.length < 2) return null;
             const matches = allUsers.filter((user) => {
                 const display = (user.displayName || '').toLowerCase();
                 const number = String(user.employeeNumber || user.employeeID || '').toLowerCase();
@@ -273,11 +269,7 @@ class EquipmentManager {
             }
             submitBtn.disabled = true;
             try {
-                if (resolvedUser.kind === 'admin') {
-                    this.currentUser = await window.sqlAPI.loginAdmin('admin', pinCode);
-                } else {
-                    this.currentUser = await window.sqlAPI.loginEmployee(resolvedUser.employeeID, pinCode);
-                }
+                this.currentUser = await window.sqlAPI.loginEmployee(resolvedUser.employeeID, pinCode);
                 this.updateUserInterface();
                 this.notifyAuthChanged();
                 modal.remove();

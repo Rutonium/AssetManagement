@@ -13,8 +13,9 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, ValidationError
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session, selectinload
+from starlette.middleware.sessions import SessionMiddleware
 
 try:
     from dotenv import load_dotenv
@@ -72,13 +73,36 @@ RENTAL_UPLOADS_DIR = STATIC_DIR / "uploads" / "rentals"
 
 app = FastAPI()
 
+def _parse_csv_env(name: str, default: str) -> list[str]:
+    raw = os.environ.get(name, default)
+    return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+
+_CORS_ALLOW_ORIGINS = _parse_csv_env(
+    "CORS_ALLOW_ORIGINS",
+    "http://127.0.0.1,http://localhost,http://127.0.0.1:5001,http://localhost:5001",
+)
+_CORS_ALLOW_CREDENTIALS = str(os.environ.get("CORS_ALLOW_CREDENTIALS", "true")).strip().lower() in {"1", "true", "yes", "on"}
+if "*" in _CORS_ALLOW_ORIGINS:
+    # Browsers reject wildcard origins with credentials; force safe behavior.
+    _CORS_ALLOW_CREDENTIALS = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_CORS_ALLOW_ORIGINS,
+    allow_credentials=_CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"]
 )
+_APP_SESSION_SECRET = (os.environ.get("SESSION_SIGNING_SECRET") or "").strip()
+if len(_APP_SESSION_SECRET) >= 32:
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=_APP_SESSION_SECRET,
+        session_cookie="asset_management_session",
+        same_site="lax",
+        https_only=False,
+    )
 
 STATE_ALIASES = {
     "Pending": "Reserved",
@@ -331,6 +355,7 @@ def auth_login(payload: dict, request: Request, db: Session = Depends(get_asset_
             "isLocalAdmin": True,
         }
         token = create_session(session_payload)
+        request.session["user"] = dict(session_payload)
         _record_login_success(account_key)
         _audit_auth_event(db, action="LoginSuccess", details=f"ip={client_ip} key={account_key} method=admin", user_id=LOCAL_ADMIN_EMPLOYEE_ID)
         AUTH_LOGGER.info("Login success ip=%s key=%s user_id=%s", client_ip, account_key, LOCAL_ADMIN_EMPLOYEE_ID)
@@ -356,24 +381,31 @@ def auth_login(payload: dict, request: Request, db: Session = Depends(get_asset_
             headers={"Retry-After": str(retry_after)},
         )
 
+    access = get_user_record(db, employee_id)
+    if not access.get("isProvisioned"):
+        _record_login_failure(client_ip, account_key)
+        _audit_auth_event(db, action="LoginFailed", details=f"ip={client_ip} key={account_key} reason=employee_not_provisioned", user_id=employee_id)
+        AUTH_LOGGER.warning("Login failed ip=%s key=%s reason=employee_not_provisioned", client_ip, account_key)
+        raise _invalid_login_error()
+
     pin_code = str(parsed.pinCode or parsed.password or "")
-    employee_entry = _require_employee_or_400(employee_id)
     if not verify_password(db, employee_id, pin_code):
         _record_login_failure(client_ip, account_key)
         _audit_auth_event(db, action="LoginFailed", details=f"ip={client_ip} key={account_key} reason=invalid_employee_pin", user_id=employee_id)
         AUTH_LOGGER.warning("Login failed ip=%s key=%s reason=invalid_employee_pin", client_ip, account_key)
         raise _invalid_login_error()
 
-    access = get_user_record(db, employee_id)
+    directory_entry = _safe_employee_directory().get(str(employee_id)) or {}
     session_payload = {
         "employeeID": employee_id,
-        "displayName": employee_entry.get("displayName") or employee_entry.get("name") or str(employee_id),
-        "name": employee_entry.get("name") or "",
-        "initials": employee_entry.get("initials") or "",
+        "displayName": directory_entry.get("displayName") or directory_entry.get("name") or f"Employee #{employee_id}",
+        "name": directory_entry.get("name") or "",
+        "initials": directory_entry.get("initials") or "",
         "role": access.get("role") or "User",
         "rights": access.get("rights") or {},
     }
     token = create_session(session_payload)
+    request.session["user"] = dict(session_payload)
     _record_login_success(account_key)
     _audit_auth_event(db, action="LoginSuccess", details=f"ip={client_ip} key={account_key} method=employee", user_id=employee_id)
     AUTH_LOGGER.info("Login success ip=%s key=%s user_id=%s", client_ip, account_key, employee_id)
@@ -381,24 +413,40 @@ def auth_login(payload: dict, request: Request, db: Session = Depends(get_asset_
 
 
 @app.post("/api/auth/logout")
-def auth_logout(x_session_token: str | None = Header(None, alias="X-Session-Token")):
+def auth_logout(request: Request, x_session_token: str | None = Header(None, alias="X-Session-Token")):
+    request.session.clear()
     remove_session(x_session_token)
     return {"ok": True}
 
 
 @app.get("/api/auth/me")
-def auth_me(x_session_token: str | None = Header(None, alias="X-Session-Token")):
-    session = _require_session_or_401(x_session_token)
+def auth_me(request: Request, x_session_token: str | None = Header(None, alias="X-Session-Token")):
+    session = _require_session_or_401(request, x_session_token)
     return {"user": session}
+
+
+@app.get("/api/auth/users")
+def auth_users(db: Session = Depends(get_asset_db)):
+    users = list_provisioned_users(db)
+    # Login lookup must only use provisioned AtlasUsers, no employee directory expansion.
+    return [
+        {
+            "employeeID": int(item.get("employeeID") or 0),
+            "displayName": str(item.get("displayName") or f"Employee #{int(item.get('employeeID') or 0)}"),
+        }
+        for item in users
+        if int(item.get("employeeID") or 0) > 0
+    ]
 
 
 @app.get("/api/admin/users")
 def list_admin_users(
+    request: Request,
     force_refresh: bool = Query(False, alias="forceRefresh"),
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    _require_admin_session_or_403(x_session_token)
+    _require_admin_session_or_403(request, x_session_token)
     try:
         rows = get_employees_list(force_refresh=force_refresh)
     except EmployeeDirectoryError as exc:
@@ -408,11 +456,12 @@ def list_admin_users(
 
 @app.post("/api/admin/users")
 def create_admin_user(
+    request: Request,
     payload: dict,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    _require_admin_session_or_403(x_session_token)
+    _require_admin_session_or_403(request, x_session_token)
     employee_id = _resolve_employee_number_or_400(payload.get("employeeID") or 0)
     _require_employee_or_400(employee_id)
     role = payload.get("role")
@@ -451,12 +500,13 @@ def create_admin_user(
 
 @app.put("/api/admin/users/{employee_id}")
 def update_admin_user(
+    request: Request,
     employee_id: int,
     payload: dict,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    _require_admin_session_or_403(x_session_token)
+    _require_admin_session_or_403(request, x_session_token)
     _require_employee_or_400(employee_id)
     role = payload.get("role")
     rights = payload.get("rights")
@@ -482,11 +532,12 @@ def update_admin_user(
 
 @app.delete("/api/admin/users/{employee_id}")
 def delete_admin_user(
+    request: Request,
     employee_id: int,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    _require_admin_session_or_403(x_session_token)
+    _require_admin_session_or_403(request, x_session_token)
     try:
         deleted = delete_user_record(db, employee_id)
     except ValueError as exc:
@@ -786,6 +837,7 @@ def get_offer_by_number(offer_number: str, db: Session = Depends(get_asset_db)):
 
 @app.post("/api/offers/{offer_number}/checkout")
 def checkout_offer(
+    request: Request,
     offer_number: str,
     payload: OfferCheckoutRequest,
     db: Session = Depends(get_asset_db),
@@ -800,7 +852,7 @@ def checkout_offer(
     if not offer or _normalize_state(offer.Status) != "Offer":
         raise HTTPException(status_code=404, detail="Offer not found")
 
-    session = get_session(x_session_token)
+    session = _get_active_session(request, x_session_token)
     actor_employee_id = int(session.get("employeeID")) if session else None
     checkout_payload = CreateRentalDto(
         employeeID=actor_employee_id or payload.employeeID,
@@ -822,7 +874,7 @@ def checkout_offer(
         ],
     )
 
-    created = create_rental(checkout_payload, db)
+    created = create_rental(request, checkout_payload, db, x_session_token)
     _transition_state(offer, "Closed")
     offer.UpdatedDate = datetime.now()
     db.commit()
@@ -863,12 +915,14 @@ def get_rental_availability(
 
 
 @app.post("/api/kiosk/lend")
-def kiosk_lend(payload: KioskLendRequest, db: Session = Depends(get_asset_db)):
+def kiosk_lend(request: Request, payload: KioskLendRequest, db: Session = Depends(get_asset_db)):
     employee_id = _resolve_employee_number_or_400(payload.employeeID)
     employee_entry = _require_employee_or_400(employee_id)
     pin = (payload.pinCode or "").strip()
     if len(pin) < 4:
         raise HTTPException(status_code=400, detail="PIN code must be at least 4 characters.")
+    if not verify_password(db, employee_id, pin):
+        raise HTTPException(status_code=401, detail="Invalid credentials.")
     if payload.endDate < payload.startDate:
         raise HTTPException(status_code=400, detail="endDate must be on or after startDate.")
     if not payload.rentalItems:
@@ -901,7 +955,7 @@ def kiosk_lend(payload: KioskLendRequest, db: Session = Depends(get_asset_db)):
         ],
     )
 
-    created = create_rental(create_payload, db)
+    created = create_rental(request, create_payload, db, None)
 
     stmt = (
         select(Rental)
@@ -945,11 +999,12 @@ def kiosk_lend(payload: KioskLendRequest, db: Session = Depends(get_asset_db)):
 
 @app.post("/api/rentals")
 def create_rental(
+    request: Request,
     payload: CreateRentalDto,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    session = get_session(x_session_token)
+    session = _get_active_session(request, x_session_token)
     requested_employee = int(session.get("employeeID")) if session else payload.employeeID
     employee_id = _resolve_employee_number_or_400(requested_employee)
     employee_entry = _require_employee_or_400(employee_id)
@@ -1015,25 +1070,27 @@ def create_rental(
 
 @app.post("/api/rentals/{rental_id}/approve")
 def approve_rental(
+    request: Request,
     rental_id: int,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
     decision = ReservationDecisionRequest(
         decision="approve",
-        operatorUserID=_resolve_actor_user_id(None, x_session_token),
+        operatorUserID=_resolve_actor_user_id(None, request, x_session_token),
     )
-    return decide_rental(rental_id, decision, db)
+    return decide_rental(request, rental_id, decision, db, x_session_token)
 
 
 @app.post("/api/rentals/{rental_id}/decide")
 def decide_rental(
+    request: Request,
     rental_id: int,
     payload: ReservationDecisionRequest,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    payload.operatorUserID = _resolve_actor_user_id(payload.operatorUserID, x_session_token)
+    payload.operatorUserID = _resolve_actor_user_id(payload.operatorUserID, request, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -1099,12 +1156,13 @@ def decide_rental(
 
 @app.post("/api/rentals/{rental_id}/mark-items-for-rental")
 def mark_items_for_rental(
+    request: Request,
     rental_id: int,
     payload: MarkItemsForRentalRequest,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    payload.operatorUserID = _resolve_actor_user_id(payload.operatorUserID, x_session_token)
+    payload.operatorUserID = _resolve_actor_user_id(payload.operatorUserID, request, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -1253,12 +1311,13 @@ def mark_items_for_rental(
 
 @app.post("/api/rentals/{rental_id}/extend")
 def extend_rental(
+    request: Request,
     rental_id: int,
     payload: ExtensionRequest,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    actor_user_id = _resolve_actor_user_id(None, x_session_token)
+    actor_user_id = _resolve_actor_user_id(None, request, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -1303,11 +1362,12 @@ def extend_rental(
 
 @app.post("/api/rentals/{rental_id}/cancel")
 def cancel_rental(
+    request: Request,
     rental_id: int,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    actor_user_id = _resolve_actor_user_id(None, x_session_token)
+    actor_user_id = _resolve_actor_user_id(None, request, x_session_token)
     rental = db.get(Rental, rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
@@ -1318,7 +1378,7 @@ def cancel_rental(
             reason="Cancelled by warehouse dispatcher",
             operatorUserID=actor_user_id,
         )
-        return decide_rental(rental_id, decision, db)
+        return decide_rental(request, rental_id, decision, db, x_session_token)
     if current not in {"Offer"}:
         raise HTTPException(status_code=400, detail="Only Offer/Reserved rentals can be closed by cancel.")
 
@@ -1332,12 +1392,13 @@ def cancel_rental(
 
 @app.post("/api/rentals/{rental_id}/return")
 def return_rental(
+    request: Request,
     rental_id: int,
     payload: ReturnRequest,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    actor_user_id = _resolve_actor_user_id(None, x_session_token)
+    actor_user_id = _resolve_actor_user_id(None, request, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -1360,12 +1421,13 @@ def return_rental(
 
 @app.post("/api/rentals/{rental_id}/receive-marked-items")
 def receive_marked_items(
+    request: Request,
     rental_id: int,
     payload: ReceiveMarkedItemsRequest,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    payload.operatorUserID = _resolve_actor_user_id(payload.operatorUserID, x_session_token)
+    payload.operatorUserID = _resolve_actor_user_id(payload.operatorUserID, request, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -1470,12 +1532,13 @@ def receive_marked_items(
 
 @app.post("/api/rentals/{rental_id}/force-extend")
 def force_extend_rental(
+    request: Request,
     rental_id: int,
     payload: ExtensionRequest,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    actor_user_id = _resolve_actor_user_id(None, x_session_token)
+    actor_user_id = _resolve_actor_user_id(None, request, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -1504,12 +1567,13 @@ def force_extend_rental(
 
 @app.post("/api/rentals/{rental_id}/force-return")
 def force_return_rental(
+    request: Request,
     rental_id: int,
     payload: ReturnRequest,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    actor_user_id = _resolve_actor_user_id(None, x_session_token)
+    actor_user_id = _resolve_actor_user_id(None, request, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems))
@@ -1532,11 +1596,12 @@ def force_return_rental(
 
 @app.post("/api/rentals/{rental_id}/mark-lost")
 def mark_rental_lost(
+    request: Request,
     rental_id: int,
     db: Session = Depends(get_asset_db),
     x_session_token: str | None = Header(None, alias="X-Session-Token"),
 ):
-    actor_user_id = _resolve_actor_user_id(None, x_session_token)
+    actor_user_id = _resolve_actor_user_id(None, request, x_session_token)
     stmt = (
         select(Rental)
         .options(selectinload(Rental.RentalItems).selectinload(RentalItem.Tool))
@@ -1672,7 +1737,7 @@ def get_warehouse_instances(warehouse_id: int, db: Session = Depends(get_asset_d
     instances = db.execute(
         select(ToolInstance, Tool)
         .join(Tool, Tool.ToolID == ToolInstance.ToolID)
-        .where(ToolInstance.WarehouseID == warehouse_id)
+        .where(or_(ToolInstance.WarehouseID == warehouse_id, ToolInstance.WarehouseID.is_(None)))
         .order_by(Tool.ToolName, ToolInstance.SerialNumber)
     ).all()
 
@@ -2129,21 +2194,32 @@ def _safe_employee_directory() -> dict[str, dict[str, str]]:
         return {}
 
 
-def _require_session_or_401(session_token: str | None) -> dict:
-    session = get_session(session_token)
+def _get_active_session(request: Request, session_token: str | None) -> dict | None:
+    session_from_cookie = request.session.get("user")
+    if isinstance(session_from_cookie, dict):
+        return dict(session_from_cookie)
+    session_from_token = get_session(session_token)
+    if session_from_token:
+        request.session["user"] = dict(session_from_token)
+        return dict(session_from_token)
+    return None
+
+
+def _require_session_or_401(request: Request, session_token: str | None) -> dict:
+    session = _get_active_session(request, session_token)
     if not session:
         raise HTTPException(status_code=401, detail="Not logged in.")
     return session
 
 
-def _require_admin_session_or_403(session_token: str | None) -> dict:
-    session = _require_session_or_401(session_token)
+def _require_admin_session_or_403(request: Request, session_token: str | None) -> dict:
+    session = _require_session_or_401(request, session_token)
     if str(session.get("role") or "").strip() != "Admin":
         raise HTTPException(status_code=403, detail="Admin role required.")
     return session
 
 
-def _resolve_actor_user_id(candidate_user_id: int | None, session_token: str | None) -> int | None:
+def _resolve_actor_user_id(candidate_user_id: int | None, request: Request, session_token: str | None) -> int | None:
     if candidate_user_id is not None:
         try:
             value = int(candidate_user_id)
@@ -2151,7 +2227,7 @@ def _resolve_actor_user_id(candidate_user_id: int | None, session_token: str | N
                 return value
         except (TypeError, ValueError):
             pass
-    session = get_session(session_token)
+    session = _get_active_session(request, session_token)
     if not session:
         return None
     try:
@@ -2174,28 +2250,15 @@ def _resolve_employee_number_or_400(raw_value: int | str) -> int:
 def _require_employee_or_400(employee_id: int) -> dict[str, str]:
     try:
         directory = get_employee_directory()
-    except EmployeeDirectoryError:
-        return {
-            "number": str(employee_id),
-            "normalizedNumber": str(employee_id),
-            "name": f"Employee #{employee_id}",
-            "initials": "",
-            "displayName": f"Employee #{employee_id}",
-            "email": "",
-            "departmentCode": "",
-        }
+    except EmployeeDirectoryError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Employee directory unavailable: {exc}",
+        ) from exc
 
     entry = directory.get(str(employee_id))
     if not entry:
-        return {
-            "number": str(employee_id),
-            "normalizedNumber": str(employee_id),
-            "name": f"Employee #{employee_id}",
-            "initials": "",
-            "displayName": f"Employee #{employee_id}",
-            "email": "",
-            "departmentCode": "",
-        }
+        raise HTTPException(status_code=400, detail="employeeID is not found in employee directory.")
     return entry
 
 

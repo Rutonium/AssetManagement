@@ -36,9 +36,19 @@ RIGHTS_BY_ROLE = {
 _BASE_DIR = Path(__file__).resolve().parent.parent
 _DATA_DIR = _BASE_DIR / "data"
 _STORE_PATH = _DATA_DIR / "user_access.json"
+_REVOKED_TOKENS_PATH = _DATA_DIR / "revoked_sessions.json"
 _LOCK = threading.Lock()
 _SESSIONS: dict[str, dict[str, Any]] = {}
-_SESSION_SECRET = (os.environ.get("SESSION_SIGNING_SECRET") or "asset-management-session-secret-change-me").encode("utf-8")
+
+
+def _require_session_secret() -> bytes:
+    raw = (os.environ.get("SESSION_SIGNING_SECRET") or "").strip()
+    if len(raw) < 32:
+        raise RuntimeError("SESSION_SIGNING_SECRET must be set and at least 32 characters long.")
+    return raw.encode("utf-8")
+
+
+_SESSION_SECRET = _require_session_secret()
 
 
 def _ensure_data_dir() -> None:
@@ -90,6 +100,30 @@ def _load_store_unlocked() -> dict[str, Any]:
 def _save_store_unlocked(store: dict[str, Any]) -> None:
     _ensure_data_dir()
     _STORE_PATH.write_text(json.dumps(store, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def _load_revoked_tokens_unlocked() -> dict[str, float]:
+    _ensure_data_dir()
+    if not _REVOKED_TOKENS_PATH.exists():
+        return {}
+    try:
+        payload = json.loads(_REVOKED_TOKENS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    out: dict[str, float] = {}
+    for token, expires_at in payload.items():
+        try:
+            out[str(token)] = float(expires_at)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _save_revoked_tokens_unlocked(tokens: dict[str, float]) -> None:
+    _ensure_data_dir()
+    _REVOKED_TOKENS_PATH.write_text(json.dumps(tokens, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
 def get_user_record(employee_id: int) -> dict[str, Any]:
@@ -208,37 +242,42 @@ def get_session(token: str | None) -> dict[str, Any] | None:
     now = time.time()
     try:
         encoded, encoded_sig = token.split(".", 1)
-    except ValueError:
-        with _LOCK:
-            session = _SESSIONS.get(token)
-            if not session:
-                return None
-            expires_at = float(session.get("expiresAt") or 0.0)
-            if now >= expires_at:
-                _SESSIONS.pop(token, None)
-                return None
-            return dict(session)
-
-    expected_sig = hmac.new(_SESSION_SECRET, encoded.encode("ascii"), hashlib.sha256).digest()
-    try:
+        expected_sig = hmac.new(_SESSION_SECRET, encoded.encode("ascii"), hashlib.sha256).digest()
         supplied_sig = base64.urlsafe_b64decode(encoded_sig + "=" * (-len(encoded_sig) % 4))
-    except Exception:
-        return None
-    if not hmac.compare_digest(expected_sig, supplied_sig):
-        return None
-
-    try:
+        if not hmac.compare_digest(expected_sig, supplied_sig):
+            return None
         payload_raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
-        session = json.loads(payload_raw.decode("utf-8"))
+        decoded_session = json.loads(payload_raw.decode("utf-8"))
     except Exception:
         return None
-    if not isinstance(session, dict):
+
+    if not isinstance(decoded_session, dict):
         return None
 
-    expires_at = float(session.get("expiresAt") or 0.0)
+    expires_at = float(decoded_session.get("expiresAt") or 0.0)
     if now >= expires_at:
+        with _LOCK:
+            _SESSIONS.pop(token, None)
         return None
-    return dict(session)
+
+    with _LOCK:
+        revoked = _load_revoked_tokens_unlocked()
+        changed = False
+        for revoked_token, revoked_exp in list(revoked.items()):
+            if now >= float(revoked_exp):
+                revoked.pop(revoked_token, None)
+                changed = True
+        if token in revoked:
+            if changed:
+                _save_revoked_tokens_unlocked(revoked)
+            _SESSIONS.pop(token, None)
+            return None
+        if changed:
+            _save_revoked_tokens_unlocked(revoked)
+
+        # Cache for this process; cross-process validation remains token-based.
+        _SESSIONS[token] = decoded_session
+        return dict(decoded_session)
 
 
 def remove_session(token: str | None) -> None:
@@ -246,3 +285,16 @@ def remove_session(token: str | None) -> None:
         return
     with _LOCK:
         _SESSIONS.pop(token, None)
+        now = time.time()
+        revoked = _load_revoked_tokens_unlocked()
+        try:
+            encoded = token.split(".", 1)[0]
+            payload_raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+            decoded = json.loads(payload_raw.decode("utf-8"))
+            expires_at = float(decoded.get("expiresAt") or 0.0)
+        except Exception:
+            expires_at = now + SESSION_TTL_SECONDS
+        if expires_at <= now:
+            return
+        revoked[token] = expires_at
+        _save_revoked_tokens_unlocked(revoked)

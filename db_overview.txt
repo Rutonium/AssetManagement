@@ -1,2 +1,0 @@
-Could not connect to DB: (pyodbc.Error) ('01000', "[01000] [unixODBC][Driver Manager]Can't open lib 'ODBC Driver 18 for SQL Server' : file not found (0) (SQLDriverConnect)")
-(Background on this error at: https://sqlalche.me/e/20/dbapi)

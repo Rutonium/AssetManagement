@@ -10,37 +10,20 @@ class SQLServerAPI {
                 : '/api';
         }
         this.currentUser = null;
-        this.sessionTokenKey = 'asset_management_session_token';
     }
 
     getSessionToken() {
-        try {
-            return window.localStorage.getItem(this.sessionTokenKey) || '';
-        } catch (_) {
-            return '';
-        }
+        return '';
     }
 
     setSessionToken(token) {
-        try {
-            if (token) {
-                window.localStorage.setItem(this.sessionTokenKey, String(token));
-            } else {
-                window.localStorage.removeItem(this.sessionTokenKey);
-            }
-        } catch (_) {
-            // ignore localStorage issues
-        }
+        // Session is cookie-based; kept for compatibility with old calls.
     }
 
     _withAuth(init) {
         const source = init || {};
         const headers = { ...(source.headers || {}) };
-        const token = this.getSessionToken();
-        if (token) {
-            headers['X-Session-Token'] = token;
-        }
-        return { ...source, headers };
+        return { ...source, headers, credentials: 'include' };
     }
 
     async _fetch(url, init) {
@@ -50,9 +33,9 @@ class SQLServerAPI {
     async _getJson(url, init) {
         const response = await this._fetch(url, init);
         if (!response.ok) {
-            if (response.status === 401) {
+            const isAuthEndpoint = /\/auth\/(me|login|logout)$/.test(String(url));
+            if (response.status === 401 && isAuthEndpoint) {
                 this.currentUser = null;
-                this.setSessionToken('');
             }
             const message = await response.text().catch(() => '');
             throw new Error(`${response.status} ${response.statusText}${message ? ` - ${message}` : ''}`);
@@ -76,7 +59,6 @@ class SQLServerAPI {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        this.setSessionToken(result?.sessionToken || '');
         this.currentUser = result?.user || null;
         return this.currentUser;
     }
@@ -91,7 +73,6 @@ class SQLServerAPI {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        this.setSessionToken(result?.sessionToken || '');
         this.currentUser = result?.user || null;
         return this.currentUser;
     }
@@ -107,32 +88,28 @@ class SQLServerAPI {
             // ignore and clear local session anyway
         }
         this.currentUser = null;
-        this.setSessionToken('');
     }
 
     async getCurrentUser(forceRefresh = false) {
         if (!forceRefresh && this.currentUser) {
             return this.currentUser;
         }
-        const token = this.getSessionToken();
-        if (!token) {
-            this.currentUser = null;
-            return null;
-        }
         try {
             const payload = await this._getJson(`${this.baseUrl}/auth/me`);
             this.currentUser = payload?.user || null;
             return this.currentUser;
         } catch (_) {
-            this.currentUser = null;
-            this.setSessionToken('');
-            return null;
+            return this.currentUser || null;
         }
     }
 
     async getAdminUsers(forceRefresh = false) {
         const qs = forceRefresh ? '?forceRefresh=true' : '';
         return this._getJson(`${this.baseUrl}/admin/users${qs}`);
+    }
+
+    async getLoginUsers() {
+        return this._getJson(`${this.baseUrl}/auth/users`);
     }
 
     async createAdminUser(payload) {

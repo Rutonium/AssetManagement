@@ -43,10 +43,30 @@ UPLOADS_DIR = STATIC_DIR / "uploads" / "tools"
 
 app = FastAPI()
 
+def _parse_csv_env(name: str, default: str) -> list[str]:
+    raw = os.environ.get(name, default)
+    return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+
+def _require_session_secret() -> None:
+    raw = (os.environ.get("SESSION_SIGNING_SECRET") or "").strip()
+    if len(raw) < 32:
+        raise RuntimeError("SESSION_SIGNING_SECRET must be set and at least 32 characters long.")
+
+
+_require_session_secret()
+_CORS_ALLOW_ORIGINS = _parse_csv_env(
+    "CORS_ALLOW_ORIGINS",
+    "http://127.0.0.1,http://localhost,http://127.0.0.1:5001,http://localhost:5001",
+)
+_CORS_ALLOW_CREDENTIALS = str(os.environ.get("CORS_ALLOW_CREDENTIALS", "true")).strip().lower() in {"1", "true", "yes", "on"}
+if "*" in _CORS_ALLOW_ORIGINS:
+    _CORS_ALLOW_CREDENTIALS = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_CORS_ALLOW_ORIGINS,
+    allow_credentials=_CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"]
 )

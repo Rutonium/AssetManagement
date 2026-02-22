@@ -5,3 +5,4 @@ SQLAlchemy==2.0.38
 pyodbc==5.2.0
 python-dotenv==1.0.1
 python-multipart==0.0.9
+itsdangerous==2.2.0

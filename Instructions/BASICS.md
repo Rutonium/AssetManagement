@@ -7,9 +7,9 @@ This is the single source of truth for day-to-day project operations.
 - App code: `asset_management/`
 - Deployment script: `deploy/deploy_to_debian.ps1`
 - Canonical SQL migration scripts:
-  - `asset_management_stage/20260221_1400_schema_reconcile.sql`
-  - `asset_management_stage/20260221_1605_atlas_users.sql`
-- Shared login design spec: `ATLAS_LOGIN_SPEC.md`
+  - `SQL Queries/20260221_1400_schema_reconcile.sql`
+  - `SQL Queries/20260221_1605_atlas_users.sql`
+- Shared login design spec: `Instructions/ATLAS_LOGIN_SPEC.md`
 
 ## 2) Local Environment
 
@@ -55,8 +55,8 @@ REMOTE_HOST=139.162.170.26 REMOTE_USER=rune ./deploy/linux_deploy.sh
 
 Run:
 
-1. `asset_management_stage/20260221_1400_schema_reconcile.sql`
-2. `asset_management_stage/20260221_1605_atlas_users.sql`
+1. `SQL Queries/20260221_1400_schema_reconcile.sql`
+2. `SQL Queries/20260221_1605_atlas_users.sql`
 
 ## 5) DB Overview / Health Validation
 
@@ -91,7 +91,7 @@ Health endpoints:
 
 ## 7) Rules To Avoid Drift
 
-- Use only one migration set (no alternate copies).
+- Use only one migration set (no alternate copies). Canonical path: `SQL Queries/`.
 - Keep docs pointing to full relative paths.
 - Keep `asset_management/.env.example` and `asset_management_stage/.env.example` aligned.
 - Never store production tokens/passwords in tracked files.

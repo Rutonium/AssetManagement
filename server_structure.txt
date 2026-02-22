@@ -1,143 +1,40 @@
-TableName	ColumnName	DataType	max_length	is_nullable	is_identity
-Categories	CategoryID	int	4	0	1
-Categories	CategoryName	nvarchar	200	0	0
-Categories	Description	nvarchar	1000	1	0
-Categories	ParentCategoryID	int	4	1	0
-Categories	CreatedDate	datetime2	8	1	0
-Certificates	CertificateID	int	4	0	1
-Certificates	ToolID	int	4	0	0
-Certificates	CertificateNumber	nvarchar	200	0	0
-Certificates	CertificateType	nvarchar	100	0	0
-Certificates	IssueDate	date	3	0	0
-Certificates	ExpiryDate	date	3	1	0
-Certificates	IssuingAuthority	nvarchar	400	1	0
-Certificates	CertificatePath	nvarchar	1000	1	0
-Certificates	Cost	decimal	5	1	0
-Certificates	Notes	nvarchar	1000	1	0
-Certificates	CreatedDate	datetime2	8	1	0
-Rental	RentalID	int	4	0	1
-Rental	RentalNumber	nvarchar	100	0	0
-Rental	EmployeeID	int	4	0	0
-Rental	Purpose	nvarchar	2000	0	0
-Rental	ProjectCode	nvarchar	100	1	0
-Rental	Status	nvarchar	40	1	0
-Rental	StartDate	date	3	0	0
-Rental	EndDate	date	3	0	0
-Rental	ActualStart	date	3	1	0
-Rental	ActualEnd	date	3	1	0
-Rental	TotalCost	decimal	9	1	0
-Rental	ApprovedBy	int	4	1	0
-Rental	ApprovalDate	date	3	1	0
-Rental	CheckoutCondition	nvarchar	1000	1	0
-Rental	ReturnCondition	nvarchar	1000	1	0
-Rental	Notes	nvarchar	2000	1	0
-Rental	CreatedDate	datetime2	8	1	0
-Rental	UpdatedDate	datetime2	8	1	0
-RentalItems	RentalItemID	int	4	0	1
-RentalItems	RentalID	int	4	0	0
-RentalItems	ToolID	int	4	0	0
-RentalItems	Quantity	int	4	1	0
-RentalItems	DailyCost	decimal	5	1	0
-RentalItems	TotalCost	decimal	9	1	0
-RentalItems	CheckoutNotes	nvarchar	1000	1	0
-RentalItems	ReturnNotes	nvarchar	1000	1	0
-Service	ServiceID	int	4	0	1
-Service	ToolID	int	4	0	0
-Service	ServiceType	nvarchar	100	0	0
-Service	ServiceDate	date	3	0	0
-Service	Description	nvarchar	2000	0	0
-Service	Cost	decimal	9	1	0
-Service	PerformedBy	nvarchar	400	1	0
-Service	NextServiceDue	date	3	1	0
-Service	Notes	nvarchar	2000	1	0
-Service	CreatedDate	datetime2	8	1	0
-TED_Bid_Assignments	ted_no	nvarchar	160	0	0
-TED_Bid_Assignments	responsible	nvarchar	400	1	0
-TED_Bid_Assignments	approver	nvarchar	400	1	0
-TED_Bid_Assignments	assignee	nvarchar	400	1	0
-TED_Bid_Assignments	due_date	date	3	1	0
-TED_Bid_Assignments	review_date	date	3	1	0
-TED_Bid_Assignments	submitted	bit	1	0	0
-TED_Bid_Assignments	review_fit	int	4	1	0
-TED_Bid_Assignments	review_scope	int	4	1	0
-TED_Bid_Assignments	review_value	int	4	1	0
-TED_Bid_Assignments	review_feasibility	int	4	1	0
-TED_Bid_Assignments	review_note	nvarchar	-1	1	0
-TED_Bid_Assignments	last_updated_by	nvarchar	100	1	0
-TED_Bid_Assignments	updated_at	datetime2	6	1	0
-TED_Tender_Latest	ted_no	nvarchar	160	0	0
-TED_Tender_Latest	portal	nvarchar	40	1	0
-TED_Tender_Latest	title	nvarchar	1000	1	0
-TED_Tender_Latest	description	nvarchar	-1	1	0
-TED_Tender_Latest	verdict	nvarchar	40	1	0
-TED_Tender_Latest	confidence	int	4	1	0
-TED_Tender_Latest	reason	nvarchar	-1	1	0
-TED_Tender_Latest	link	nvarchar	2000	1	0
-TED_Tender_Latest	tender_deadline	datetime2	6	1	0
-TED_Tender_Latest	last_seen_run_at_utc	datetime2	6	0	0
-TED_Tender_Latest	source_file	nvarchar	520	1	0
-TED_Tender_Latest	user_id	nvarchar	100	1	0
-TED_Tender_Latest	publication_date	datetime2	6	1	0
-TED_Tender_Report	id	int	4	0	1
-TED_Tender_Report	run_id	uniqueidentifier	16	0	0
-TED_Tender_Report	run_at_utc	datetime2	6	0	0
-TED_Tender_Report	source_file	nvarchar	520	1	0
-TED_Tender_Report	portal	nvarchar	40	1	0
-TED_Tender_Report	ted_no	nvarchar	160	0	0
-TED_Tender_Report	title	nvarchar	1000	1	0
-TED_Tender_Report	description	nvarchar	-1	1	0
-TED_Tender_Report	verdict	nvarchar	40	1	0
-TED_Tender_Report	confidence	int	4	1	0
-TED_Tender_Report	reason	nvarchar	-1	1	0
-TED_Tender_Report	link	nvarchar	2000	1	0
-TED_Tender_Report	user_id	nvarchar	100	1	0
-TED_Tender_Report	tender_deadline	datetime2	6	1	0
-TED_Tender_Report	publication_date	datetime2	6	1	0
-ToolLocations	AssignmentID	int	4	0	1
-ToolLocations	ToolID	int	4	0	0
-ToolLocations	LocationID	int	4	0	0
-ToolLocations	AssignedDate	datetime2	8	1	0
-ToolLocations	AssignedBy	int	4	0	0
-ToolLocations	Notes	nvarchar	1000	1	0
-ToolLocations	IsCurrent	bit	1	1	0
-Tools	ToolID	int	4	0	1
-Tools	ToolName	nvarchar	510	0	0
-Tools	SerialNumber	nvarchar	200	1	0
-Tools	ModelNumber	nvarchar	200	1	0
-Tools	Manufacturer	nvarchar	200	1	0
-Tools	CategoryID	int	4	1	0
-Tools	Description	nvarchar	2000	1	0
-Tools	PurchaseDate	date	3	1	0
-Tools	PurchaseCost	decimal	9	1	0
-Tools	CurrentValue	decimal	9	1	0
-Tools	CalibrationInterval	int	4	1	0
-Tools	LastCalibration	date	3	1	0
-Tools	NextCalibration	date	3	1	0
-Tools	Status	nvarchar	40	1	0
-Tools	Condition	nvarchar	40	1	0
-Tools	DailyRentalCost	decimal	5	1	0
-Tools	RequiresCertification	bit	1	1	0
-Tools	WarehouseID	int	4	1	0
-Tools	LocationCode	nvarchar	40	1	0
-Tools	ImagePath	nvarchar	1000	1	0
-Tools	CreatedDate	datetime2	8	1	0
-Tools	UpdatedDate	datetime2	8	1	0
-WarehouseLocations	LocationID	int	4	0	1
-WarehouseLocations	WarehouseID	int	4	0	0
-WarehouseLocations	GridColumn	nvarchar	4	0	0
-WarehouseLocations	GridRow	int	4	0	0
-WarehouseLocations	ShelfNumber	nvarchar	40	1	0
-WarehouseLocations	Zone	nvarchar	100	1	0
-WarehouseLocations	CapacityDescription	nvarchar	400	1	0
-WarehouseLocations	IsActive	bit	1	1	0
-WarehouseLocations	CreatedDate	datetime2	8	1	0
-Warehouses	WarehouseID	int	4	0	1
-Warehouses	WarehouseName	nvarchar	200	0	0
-Warehouses	Description	nvarchar	1000	1	0
-Warehouses	Address	nvarchar	1000	1	0
-Warehouses	GridColumns	int	4	1	0
-Warehouses	GridRows	int	4	1	0
-Warehouses	ManagerID	int	4	1	0
-Warehouses	ContactPhone	nvarchar	40	1	0
-Warehouses	CreatedDate	datetime2	8	1	0
-Warehouses	IsActive	bit	1	1	0
+AssetManagement/
+├── Instructions/
+│   ├── ATLAS_LOGIN_SPEC.md
+│   ├── BASICS.md
+│   ├── employee_API.md
+│   ├── manual.md
+│   └── to-do.md
+├── SQL Queries/
+│   ├── 20260221_1400_schema_reconcile.sql
+│   └── 20260221_1605_atlas_users.sql
+├── deploy/
+│   ├── DEPLOY_RECIPE.md
+│   ├── deploy.md
+│   ├── deploy_to_debian.ps1
+│   ├── linux_deploy.sh
+│   └── linux_restart.sh
+├── asset_management/
+│   ├── AssetMan.py
+│   ├── asset_management.service
+│   ├── db/
+│   ├── models/
+│   ├── schemas/
+│   ├── services/
+│   ├── scripts/
+│   └── static/
+├── asset_management_stage/
+│   ├── AssetMan.py
+│   ├── db/
+│   ├── models/
+│   ├── schemas/
+│   ├── services/
+│   └── static/
+├── _old/
+├── SQLResult_2102202_131800.txt
+├── ReadUnit_Backup_1-1442.xlsx
+└── server_structure.txt
+
+Notes
+- Canonical SQL migration scripts live in `SQL Queries/`.
+- `asset_management_stage/` is retained as a staging snapshot and is not the canonical migration source.

@@ -393,7 +393,7 @@ def verify_password(db: Session, employee_id: int, pin_code: str) -> bool:
         return False
     row = _fetch_atlas_user_row(db, int(employee_id))
     if not row:
-        return candidate == DEFAULT_PASSWORD
+        return False
     stored_hash = row.get("PasswordHash")
     stored_salt = row.get("PasswordSalt")
     if not stored_hash or not stored_salt:

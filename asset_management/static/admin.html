@@ -98,9 +98,9 @@
         </div>
     </div>
 
-    <script src="app-config.js"></script>
-    <script src="api-simulation.js"></script>
-    <script src="main.js"></script>
+    <script src="app-config.js?v=20260222"></script>
+    <script src="api-simulation.js?v=20260222"></script>
+    <script src="main.js?v=20260222"></script>
     <script>
         const statusEl = document.getElementById('status');
         const rowsEl = document.getElementById('user-rows');
@@ -156,8 +156,9 @@
 
         function renderTable() {
             rowsEl.innerHTML = '';
-            const provisioned = (atlasUsers || []).filter((u) => u.isProvisioned);
-            provisioned.forEach((user) => {
+            const allUsers = atlasUsers || [];
+            allUsers.forEach((user) => {
+                const isProvisioned = !!user.isProvisioned;
                 const tr = document.createElement('tr');
                 tr.className = 'border-b';
                 tr.innerHTML = `
@@ -165,15 +166,21 @@
                         <div class="font-semibold">${user.employeeID}</div>
                         <div class="text-xs text-gray-500">${user.displayName || user.name || ''}</div>
                     </td>
-                    <td class="p-2 border">${summarizeRights(user)}</td>
-                    <td class="p-2 border">${user.hasCustomPassword ? 'Custom code set' : 'Default 1234'}</td>
+                    <td class="p-2 border">${isProvisioned ? summarizeRights(user) : 'Not provisioned yet'}</td>
+                    <td class="p-2 border">${isProvisioned ? (user.hasCustomPassword ? 'Custom code set' : 'Default 1234') : 'Not provisioned'}</td>
                     <td class="p-2 border">
-                        <button class="px-3 py-1 bg-gray-800 text-white rounded mr-2" data-edit>Edit</button>
-                        <button class="px-3 py-1 bg-red-700 text-white rounded" data-delete>Delete</button>
+                        ${isProvisioned
+                            ? '<button class="px-3 py-1 bg-gray-800 text-white rounded mr-2" data-edit>Edit</button><button class="px-3 py-1 bg-red-700 text-white rounded" data-delete>Delete</button>'
+                            : '<button class="px-3 py-1 bg-blue-700 text-white rounded" data-create>Create</button>'
+                        }
                     </td>
                 `;
-                tr.querySelector('[data-edit]').addEventListener('click', () => openModal('edit', user));
-                tr.querySelector('[data-delete]').addEventListener('click', () => openModal('delete', user));
+                const createBtn = tr.querySelector('[data-create]');
+                const editBtn = tr.querySelector('[data-edit]');
+                const deleteBtn = tr.querySelector('[data-delete]');
+                if (createBtn) createBtn.addEventListener('click', () => openModal('create', user));
+                if (editBtn) editBtn.addEventListener('click', () => openModal('edit', user));
+                if (deleteBtn) deleteBtn.addEventListener('click', () => openModal('delete', user));
                 rowsEl.appendChild(tr);
             });
         }
@@ -267,6 +274,15 @@
                 modalEmployeeIdEl.textContent = 'Not selected';
                 modalEmployeeSearchEl.value = '';
                 renderEmployeeLookup('');
+                if (user && user.employeeID) {
+                    selectedEmployee = user;
+                    modalEmployeeIdEl.textContent = String(user.employeeID);
+                    modalEmployeeSearchEl.value = `${user.displayName || user.name || user.employeeID}`;
+                    if (user.rights) {
+                        modalRoleEl.value = user.role || 'User';
+                        modalRightsEl.innerHTML = rightsEditor(user.rights || {});
+                    }
+                }
                 ensureEmployeeLookupData().then((ok) => {
                     if (ok) renderEmployeeLookup('');
                 });
@@ -323,23 +339,46 @@
 
         async function loadUsers(forceRefresh = false) {
             try {
-                const current = await window.sqlAPI.getCurrentUser(forceRefresh);
-                if (!current || current.role !== 'Admin') {
-                    currentAdminUser = null;
+                const hintedUser = window.sqlAPI.currentUser || currentAdminUser || null;
+                if (hintedUser && hintedUser.role === 'Admin') {
+                    currentAdminUser = hintedUser;
+                }
+
+                if (!currentAdminUser || forceRefresh) {
+                    const current = await window.sqlAPI.getCurrentUser(forceRefresh);
+                    if (current && current.role === 'Admin') {
+                        currentAdminUser = current;
+                    }
+                }
+
+                const users = await window.sqlAPI.getAdminUsers(forceRefresh);
+                if (!currentAdminUser) {
+                    const refreshed = await window.sqlAPI.getCurrentUser(false);
+                    if (refreshed && refreshed.role === 'Admin') {
+                        currentAdminUser = refreshed;
+                    }
+                }
+
+                if (!currentAdminUser || currentAdminUser.role !== 'Admin') {
                     setStatus('Admin login required. Please sign in again.', true);
                     rowsEl.innerHTML = '';
                     return;
                 }
-                currentAdminUser = current;
-                const users = await window.sqlAPI.getAdminUsers(false);
+
                 const employeeList = await window.sqlAPI.getEmployees(false).catch(() => []);
                 atlasUsers = users || [];
                 employees = employeeList || [];
                 renderTable();
-                setStatus(`Loaded ${atlasUsers.filter((u) => u.isProvisioned).length} provisioned users.`);
+                const provisionedCount = atlasUsers.filter((u) => u.isProvisioned).length;
+                setStatus(`Loaded ${atlasUsers.length} employees (${provisionedCount} provisioned).`);
             } catch (error) {
-                currentAdminUser = null;
-                setStatus(`Failed to load users: ${error.message}`, true);
+                const message = String(error && error.message ? error.message : error);
+                if (message.includes('401')) {
+                    currentAdminUser = null;
+                    setStatus('Admin login required. Please sign in again.', true);
+                } else {
+                    setStatus(`Failed to load users: ${message}`, true);
+                }
                 rowsEl.innerHTML = '';
             }
         }

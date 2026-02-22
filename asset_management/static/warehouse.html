@@ -458,9 +458,9 @@
     </footer>
 
     <!-- Scripts -->
-    <script src="app-config.js"></script>
-    <script src="api-simulation.js"></script>
-    <script src="main.js"></script>
+    <script src="app-config.js?v=20260222"></script>
+    <script src="api-simulation.js?v=20260222"></script>
+    <script src="main.js?v=20260222"></script>
     <script>
         // Warehouse-specific functionality
         class WarehouseManager {
@@ -777,7 +777,7 @@
                 const list = document.getElementById('location-add-list');
                 if (!list) return;
                 const term = (searchTerm || '').toLowerCase();
-                const unassigned = this.instances.filter(inst => !inst.locationCode);
+                const unassigned = this.instances.filter(inst => !(inst.locationCode || '').trim());
                 const filtered = term
                     ? unassigned.filter(inst =>
                         `${inst.toolName} ${inst.serialNumber}`.toLowerCase().includes(term)

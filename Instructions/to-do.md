@@ -90,6 +90,12 @@
    - Predecessor: Phase 1 reservation decision API (completed), Employee sync from Employee API
 3. Checklist photo persistence: store pickup/return checklist photos in backend records (not only local UI preview) and surface them for later lookup/audit.
    - Predecessor: Incoming/Outgoing checklist flows (completed)
+4. Outbound and return document system expansion: create a complete Packing List + Picked-Up Receipt + Returned Receipt workflow (or extend existing receipt/checklist flow to cover this end-to-end).
+   - Outbound gate: show `Package ready to be shipped` only when both picking list and packing list are complete and warehouse-released.
+   - Outbound event: when released, notify renter and accounting that rental period starts.
+   - Return gate: send return completion notification only after return checklist is fully completed.
+   - Return statement content: returned items, condition/state, return timestamp, and relevant handling notes.
+   - Exception visibility: missing items and damaged items must be clearly flagged in return outputs and notifications.
 
 ### Phase 3 - Accounting
 
@@ -102,3 +108,6 @@
    - Predecessor: Phase 1 reservation decision API (completed), Reservation approval/rejection UX (completed), Employee sync from Employee API
 4. Shortage and partial-dispatch accounting treatment: replacement/procure lines remain non-invoiceable until picked and marked In Rental; weekly statements must exclude pending shortage lines.
    - Predecessor: Weekly accounting integration for partial flows, Phase 1 shortage/partial-dispatch rules (completed)
+5. Accounting integration channel (general): implement a configurable integration path for accounting export/hand-off (weekly/monthly/custom cadence as decided).
+   - Requirement: produce final account statement per rental case after return checklist completion.
+   - Requirement: include missing/damaged-item financial treatment and final totals in accounting payload/report.

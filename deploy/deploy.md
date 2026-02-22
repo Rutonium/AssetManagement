@@ -59,10 +59,9 @@ Paste values from `.env.example` and set real SQL Server credentials.
 
 Run the SQL script in SSMS or sqlcmd:
 
-```
-asset_management_stage/20260221_1400_schema_reconcile.sql
-asset_management_stage/20260221_1605_atlas_users.sql
-```
+`SQL Queries/20260221_1400_schema_reconcile.sql`
+
+`SQL Queries/20260221_1605_atlas_users.sql`
 
 ## 6) Install dependencies in the venv
 
